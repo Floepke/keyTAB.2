@@ -1,0 +1,32 @@
+from __future__ import annotations
+from dataclasses import dataclass, field
+from typing import Literal
+from file_model.font import Font
+
+@dataclass
+class Text:
+    '''
+        Represents a time bounded text element to be rendered on the score.
+    '''
+    # text and layout
+    text: str = 'myText'
+    alignment: Literal['left', 'center', 'right'] = 'left'
+
+    # position and rotation
+    time: float = 0.0 # y coordinate uses time units (e.g., quarter note = 256.0)
+    x_rpitch: float = 0 # x coordinate uses the relative distance from c4 position in semitone distances
+    rotation: float = 0.0 # 0..360 degrees, clockwise
+    x_offset_mm: float = 0.0
+    y_offset_mm: float = 0.0
+    
+    # font settings
+    font: Font = field(default_factory=lambda: Font(
+        family="Edwin",
+        size_pt=12.0,
+        bold=False,
+        italic=True,
+        underline=False,
+    ))
+    use_custom_font: bool = False
+    text_background_width_offset_mm: float = 0.0
+    _id: int = 0

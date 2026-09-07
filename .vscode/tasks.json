@@ -1,0 +1,24 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Run Keytab2",
+            "type": "process",
+            "command": "${workspaceFolder}/.venv/bin/python",
+            "args": [
+                "${workspaceFolder}/keyTAB2.py"
+            ],
+            "options": {
+                 "cwd": "${workspaceFolder}",
+                 "env": {
+                    "DYLD_FALLBACK_LIBRARY_PATH": "/opt/homebrew/lib"
+                 }
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        }
+    ]
+}

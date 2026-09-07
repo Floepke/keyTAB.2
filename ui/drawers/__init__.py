@@ -1,0 +1,1 @@
+"""Cairo drawing components for the keyTAB2 paper editor."""

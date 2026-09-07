@@ -1,0 +1,236 @@
+from __future__ import annotations
+from dataclasses import dataclass, field
+from typing import Literal
+from keytab2_model.events import GridBandEvent as GridBand
+from keytab2_model.font import Font
+
+@dataclass
+class Layout:
+    """Document styling and engraving defaults.
+
+    Document geometry ending in ``_mm`` (page margins and system positions) is
+    absolute paper-space millimetres. Engraving appearance values ending in
+    ``_mm`` are base millimetres at an engraving scale of 1.0; rendering applies
+    the global ``scale`` and the owning stave's local scale through the helpers
+    below. Font sizes remain points until converted at the drawing boundary.
+    """
+    scale: float = 0.33
+    page_orientation: Literal['landscape', 'portrait'] = 'portrait'
+    read_direction: Literal['horizontal', 'vertical'] = 'vertical'
+    page_width_mm: float = 210.0
+    page_height_mm: float = 297.0
+    page_top_margin_mm: float = 10.0
+    page_bottom_margin_mm: float = 10.0
+    page_left_margin_mm: float = 10.0
+    page_right_margin_mm: float = 10.0
+    header_height_mm: float = 15.0
+    footer_height_mm: float = 10.0
+
+    black_note_rule: Literal['above_stem', 'below_stem', 'above_stem_if_collision', 'above_stem_if_chord_and_white_note_same_hand'] = 'above_stem'
+
+    # Note appearance
+    note_stem_length_semitone: float = 7.0
+    note_stem_thickness_mm: float = 0.8 # Thickness of the stem as well the notehead outline width
+    note_stopsign_thickness_mm: float = 1.0
+    note_continuation_dot_size_mm: float = 2.5
+    note_midinote_left_color: str = '#ccc'
+    note_midinote_right_color: str = '#ccc'
+    note_width_scaling: float = 1.0 # Scaling factor for the horizontal size of the noteheads, to make them wider or narrower.
+    notehead_height_scaling: float = 1.2 # Scaling factor for the vertical size of the noteheads, relative to width.
+    notehead_tilt: float = 0.30 # Diagonal shear tilt of noteheads (0 = perfect circle/oval, higher = traditional tilted notehead, lower = traditional tilted notehead in the opposite direction).
+
+    # Beam appearance
+    beam_thickness_mm: float = 2.5
+    beam_corner_radius_mm: float = 0.75
+
+    # Grace note appearance
+    grace_note_outline_width_mm: float = 0.8
+    grace_note_scale: float = 0.75
+
+    # Pedal appearance
+    pedal_symbol_thickness_mm: float = 1.0
+    pedal_background_padding_mm: float = 1.0
+
+    # Text appearance
+    text_background_padding_mm: float = 0.5
+
+    # Slur appearance
+    slur_width_sides_mm: float = 0.75
+    slur_width_middle_mm: float = 2.0
+
+    # Hairpin (crescendo / decrescendo) appearance
+    hairpin_line_width_mm: float = 1.0
+    hairpin_width_mm: float = 10.0  # width of the open end of the hairpin in mm
+    dynamic_symbol_font_size_pt: float = 35.0  # Font size for standalone dynamic symbols
+    dynamic_symbol_background_padding_mm: float = 1.5
+    dynamic_rotation: float = 0.0
+
+    # Repeat markers
+    
+    # Measure grouping (prefill for line break tool; not applied automatically)
+    measure_grouping: str = ""
+
+    # Count line
+    countline_dash_pattern: list[float] = field(default_factory=lambda: [0.0, 3.0])  # Dash pattern for count lines (e.g., [dash_length, gap_length])
+    countline_thickness_mm: float = 1.5
+
+    # Grid lines
+    grid_band_track: list[GridBand] = field(default_factory=list) # Grid Band track. Single track for alternating bands.
+    grid_barline_thickness_mm: float = 1.25
+    grid_gridline_thickness_mm: float = 1.0
+    grid_gridline_dash_pattern_mm: list[float] = field(default_factory=lambda: [3.0, 4.0])
+    grid_band_color: str = '#ccc'
+    grid_band_start_phase: Literal['dark', 'light'] = 'dark'
+
+    # Time signature indicator type (global)
+    time_signature_indicator_type: Literal['classical', 'klavarskribo', 'classical & klavarskribo'] = 'classical & klavarskribo'
+    
+    # Time signature indicator lane (left of stave)
+    time_signature_indicator_lane_width_mm: float = 35.0
+    time_signature_indicator_guide_thickness_mm: float = 1.0
+    time_signature_indicator_divide_guide_thickness_mm: float = 2.0
+    time_signature_indicator_classic_font: Font = field(default_factory=lambda: Font(
+        family="Edwin",
+        size_pt=40.0,
+        bold=True,
+    ))
+    time_signature_indicator_klavarskribo_font: Font = field(default_factory=lambda: Font(
+        family="Edwin",
+        size_pt=25.0,
+        bold=True,
+    ))
+    measure_numbering_guide_thickness_mm: float = 0.75
+    measure_numbering_guide_dash_pattern_mm: list[float] = field(default_factory=lambda: [2.0])
+    # 'system': number at top of each system; 'barline': number at every barline
+    measure_numbering_placement: Literal['system', 'barline'] = 'barline'
+    measure_numbering_font: Font = field(default_factory=lambda: Font(
+        family="Edwin",
+        size_pt=35.0,
+        bold=True,
+        italic=False,
+    ))
+
+    font_text: Font = field(default_factory=lambda: Font(
+        family="Edwin",
+        size_pt=12.0,
+        bold=False,
+        italic=True,
+    ))
+
+    # Info fonts
+    font_title: Font = field(default_factory=lambda: Font(
+        family="Edwin",
+        size_pt=80.0,
+        bold=False,
+    ))
+    font_composer: Font = field(default_factory=lambda: Font(
+        family="Edwin",
+        size_pt=40.0,
+        italic=True,
+    ))
+    font_copyright: Font = field(default_factory=lambda: Font(
+        family="Edwin",
+        size_pt=30.0,
+    ))
+    font_arranger: Font = field(default_factory=lambda: Font(
+        family="Edwin",
+        size_pt=15.0,
+    ))
+    font_lyricist: Font = field(default_factory=lambda: Font(
+        family="Edwin",
+        size_pt=15.0,
+    ))
+
+    # Stave appearence
+    stave_two_line_thickness_mm: float = 0.5
+    stave_three_line_thickness_mm: float = 1.1
+    stave_clef_line_thickness_mm: float = 0.75
+    stave_ledger_line_length_mm: float = 13.0
+    stave_clef_line_dash_pattern_mm: list[float] = field(default_factory=lambda: [4.0, 3.0])  # Dash pattern for clef lines (e.g., [dash_length, gap_length])
+
+    # Mini piano keyboard in engraver
+    mini_piano_octave_numbering: bool = True
+    mini_piano_color: str = '#ccc'
+    
+    # Visibility toggles for different elements
+    note_head_visible: bool = True
+    note_stem_visible: bool = True
+    accidental_visible: bool = True
+    note_stop_visible: bool = True
+    note_continuation_dot_visible: bool = True
+    note_midinote_visible: bool = True
+    beam_visible: bool = True
+    grace_note_visible: bool = True
+    text_visible: bool = True
+    slur_visible: bool = True
+    hairpin_visible: bool = True
+    dynamic_symbol_visible: bool = True
+    repeat_start_visible: bool = True
+    repeat_end_visible: bool = True
+    double_barline_visible: bool = True
+    countline_visible: bool = True
+    stave_visible: bool = True
+    barline_visible: bool = True
+    grid_line_visible: bool = True
+    grid_band_visible: bool = True
+    time_signature_visible: bool = True
+    measure_numbering_guide_visible: bool = True
+    measure_numbers_visible: bool = True
+    tempo_indicator_visible: bool = True
+    mini_piano_visible: bool = True
+
+    def engraving_scale(self, stave_scale: float = 1.0) -> float:
+        """Return the effective scale for one stave's engraving geometry."""
+        return max(0.01, float(self.scale)) * max(0.01, float(stave_scale))
+
+    def engraving_mm(self, base_mm: float, stave_scale: float = 1.0) -> float:
+        """Convert a base engraving measurement to final document millimetres."""
+        return float(base_mm) * self.engraving_scale(stave_scale)
+
+    def engraving_pt_to_mm(self, points: float, stave_scale: float = 1.0) -> float:
+        """Convert a base engraving point size to final document millimetres."""
+        return float(points) * (25.4 / 72.0) * self.engraving_scale(stave_scale)
+
+LAYOUT_FLOAT_CONFIG: dict[str, dict[str, float]] = {
+    'page_width_mm': {'min': 50.0, 'max': 5_000.0, 'step': 0.5},
+    'page_height_mm': {'min': 50.0, 'max': 10_000.0, 'step': 0.5},
+    'page_top_margin_mm': {'min': 0.0, 'max': 100.0, 'step': 0.05},
+    'page_bottom_margin_mm': {'min': 0.0, 'max': 100.0, 'step': 0.05},
+    'page_left_margin_mm': {'min': 0.0, 'max': 100.0, 'step': 0.05},
+    'page_right_margin_mm': {'min': 0.0, 'max': 100.0, 'step': 0.05},
+    'header_height_mm': {'min': 0.0, 'max': 100.0, 'step': 0.05},
+    'footer_height_mm': {'min': 0.0, 'max': 100.0, 'step': 0.05},
+    'scale': {'min': 0.25, 'max': 1.0, 'step': 0.005},
+    'note_stem_length_semitone': {'min': 3.0, 'max': 20.0, 'step': 0.05},
+    'note_stem_thickness_mm': {'min': 0.05, 'max': 5.0, 'step': 0.05},
+    'note_stopsign_thickness_mm': {'min': 0.05, 'max': 5.0, 'step': 0.05},
+    'note_continuation_dot_size_mm': {'min': 0.05, 'max': 10.0, 'step': 0.05},
+    'note_width_scaling': {'min': 0.05, 'max': 2.0, 'step': 0.01},
+    'notehead_height_scaling': {'min': 0.1, 'max': 3.0, 'step': 0.01},
+    'notehead_tilt': {'min': 0.0, 'max': 0.5, 'step': 0.01},
+    'beam_thickness_mm': {'min': 0.05, 'max': 5.0, 'step': 0.05},
+    'beam_corner_radius_mm': {'min': 0.0, 'max': 5.0, 'step': 0.05},
+    'grace_note_outline_width_mm': {'min': 0.05, 'max': 5.0, 'step': 0.05},
+    'grace_note_scale': {'min': 0.05, 'max': 1.0, 'step': 0.05},
+    'pedal_symbol_thickness_mm': {'min': 0.05, 'max': 5.0, 'step': 0.05},
+    'pedal_background_padding_mm': {'min': 0.0, 'max': 10.0, 'step': 0.05},
+    'text_background_padding_mm': {'min': 0.0, 'max': 20.0, 'step': 0.05},
+    'hairpin_line_width_mm': {'min': 0.05, 'max': 5.0, 'step': 0.05},
+    'hairpin_width_mm': {'min': 0.05, 'max': 20.0, 'step': 0.05},
+    'dynamic_symbol_font_size_pt': {'min': 4.0, 'max': 100.0, 'step': 0.5},
+    'dynamic_symbol_background_padding_mm': {'min': 0.0, 'max': 20.0, 'step': 0.05},
+    'dynamic_rotation': {'min': 0.0, 'max': 360.0, 'step': 1.0},
+    'slur_width_sides_mm': {'min': 0.05, 'max': 5.0, 'step': 0.05},
+    'slur_width_middle_mm': {'min': 0.05, 'max': 5.0, 'step': 0.05},
+    'countline_thickness_mm': {'min': 0.05, 'max': 5.0, 'step': 0.05},
+    'grid_barline_thickness_mm': {'min': 0.05, 'max': 5.0, 'step': 0.05},
+    'grid_gridline_thickness_mm': {'min': 0.05, 'max': 5.0, 'step': 0.05},
+    'measure_numbering_guide_thickness_mm': {'min': 0.05, 'max': 5.0, 'step': 0.05},
+    'time_signature_indicator_lane_width_mm': {'min': 0.05, 'max': 100.0, 'step': 0.05},
+    'time_signature_indicator_guide_thickness_mm': {'min': 0.05, 'max': 5.0, 'step': 0.05},
+    'time_signature_indicator_divide_guide_thickness_mm': {'min': 0.05, 'max': 5.0, 'step': 0.05},
+    'stave_two_line_thickness_mm': {'min': 0.05, 'max': 5.0, 'step': 0.05},
+    'stave_three_line_thickness_mm': {'min': 0.05, 'max': 5.0, 'step': 0.05},
+    'stave_clef_line_thickness_mm': {'min': 0.05, 'max': 5.0, 'step': 0.05},
+    'stave_ledger_line_length_mm': {'min': 0.05, 'max': 100.0, 'step': 0.05},
+}

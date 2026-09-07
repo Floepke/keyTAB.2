@@ -1,0 +1,1 @@
+"""Dialogs used by the keyTAB2 editor."""
