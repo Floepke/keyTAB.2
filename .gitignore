@@ -27,3 +27,4 @@ dist/
 
 # Previous keyTAB implementation
 keyTAB1/
+.vscode/
