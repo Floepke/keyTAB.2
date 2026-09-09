@@ -45,12 +45,15 @@ class NoteToolTests(unittest.TestCase):
         self.canvas.select_note_hand("right")
         tool = self.canvas._tool_manager.active_tool
         start = self._point(60, 256)
+        auditions: list[tuple[int, int]] = []
+        self.canvas.note_audition_requested.connect(lambda pitch, velocity: auditions.append((pitch, velocity)))
 
         self.assertIsNotNone(tool)
         self.assertFalse(tool.is_editing)
         self.assertTrue(tool.on_left_press(start))
         self.assertTrue(tool.is_editing)
         self.assertEqual((self.stave.events[0].time, self.stave.events[0].duration, self.stave.events[0].pitch, self.stave.events[0].hand), (256, 64, 60, "right"))
+        self.assertEqual(auditions, [(60, 64)])
         self.assertTrue(tool.on_left_drag(self._point(60, 512)))
         self.assertEqual(self.stave.events[0].duration, 64)
         self.assertTrue(tool.on_left_release(self._point(60, 512)))
@@ -62,15 +65,19 @@ class NoteToolTests(unittest.TestCase):
     def test_dragging_a_notehead_moves_time_and_pitch(self) -> None:
         tool = self.canvas._tool_manager.active_tool
         source = self._point(60, 256)
+        auditions: list[tuple[int, int]] = []
+        self.canvas.note_audition_requested.connect(lambda pitch, velocity: auditions.append((pitch, velocity)))
 
         self.assertTrue(tool.on_left_press(source))
         self.assertTrue(tool.on_left_release(source))
         self.assertTrue(tool.on_left_press(self._notehead_interior()))
+        self.assertEqual(auditions, [(60, 64), (60, 64)])
         self.assertTrue(tool.on_left_drag(self._point(62, 512)))
         self.assertTrue(tool.on_left_release(source))
 
         note = self.stave.events[0]
         self.assertEqual((note.time, note.pitch, note.duration), (512, 62, 64))
+        self.assertEqual(auditions, [(60, 64), (60, 64), (62, 64)])
 
     def test_notehead_drag_uses_overlay_until_release(self) -> None:
         tool = self.canvas._tool_manager.active_tool

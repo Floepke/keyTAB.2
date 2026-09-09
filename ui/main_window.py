@@ -173,6 +173,7 @@ class MainWindow(QMainWindow):
         self.showMaximized()
         self.paper_canvas = PaperCanvas(self.document)
         self._player = FluidSynthPlayer(self)
+        self.paper_canvas.note_audition_requested.connect(self._player.audition)
         self.paper_canvas.set_document_change_callback(self._record_document_change)
         self.paper_canvas.set_history_callbacks(self.undo, self.redo)
         self.paper_view = PaperView()

@@ -7,6 +7,12 @@ from ui.fluidsynth_player import FluidSynthPlayer
 
 
 class FluidSynthPlayerTests(unittest.TestCase):
+    def test_audition_does_not_interrupt_full_score_playback(self) -> None:
+        player = FluidSynthPlayer()
+        player._playing = True
+
+        self.assertFalse(player.audition(60))
+
     def test_schedules_note_on_and_off_at_document_tempo(self) -> None:
         document = KeyTab2Document.new()
         document.pages[0].systems[0].staves[0].events.append(NoteEvent(time=256, duration=512, pitch=60, velocity=96))

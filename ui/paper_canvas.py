@@ -37,6 +37,7 @@ class PaperCanvas(QWidget):
     """Draw the current document's paper pages using cached Cairo images."""
 
     note_hand_changed = Signal(str)
+    note_audition_requested = Signal(int, int)
 
     BASE_PIXELS_PER_MM = 3.0
     MIN_ZOOM = 0.25

@@ -7,7 +7,7 @@ import ctypes.util
 import os
 from pathlib import Path
 from threading import Event, Lock, Thread, current_thread
-from time import monotonic
+from time import monotonic, sleep
 
 from PySide6.QtCore import QObject, Signal
 
@@ -59,6 +59,29 @@ class FluidSynthPlayer(QObject):
     def stop(self) -> None:
         self._stop_event.set()
         self._all_notes_off()
+
+    def audition(self, pitch: int, velocity: int = 64, duration_seconds: float = 0.15) -> bool:
+        """Play one short note while full-score playback is idle."""
+        if self.is_playing:
+            return False
+        try:
+            self._ensure_synth()
+        except (ImportError, OSError, RuntimeError) as error:
+            self.playback_failed.emit(str(error))
+            return False
+        midi_pitch = max(0, min(127, int(pitch)))
+        midi_velocity = max(1, min(127, int(velocity)))
+
+        def run_audition() -> None:
+            try:
+                self._synth.noteon(self._channel, midi_pitch, midi_velocity)
+                sleep(max(0.02, float(duration_seconds)))
+                self._synth.noteoff(self._channel, midi_pitch)
+            except Exception:
+                self._all_notes_off()
+
+        Thread(target=run_audition, name="fluidsynth-audition", daemon=True).start()
+        return True
 
     def shutdown(self) -> None:
         self.stop()

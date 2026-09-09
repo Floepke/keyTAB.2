@@ -73,6 +73,7 @@ class NoteTool(BaseTool):
             existing_system, existing_stave, note, geometry, part = existing
             system, stave = existing_system, existing_stave
             self.canvas.select_note_hand(note.hand)
+            self.canvas.note_audition_requested.emit(note.pitch, note.velocity)
             deferred_preview = part == "head" and note.continuation_id is None
             source_left_mm = self.canvas.stave_left_mm(system, stave) if deferred_preview else None
             event_index = stave.events.index(note) if deferred_preview else None
@@ -113,6 +114,7 @@ class NoteTool(BaseTool):
         stave.events.append(note)
         stave.touch()
         self.canvas.invalidate_system_render_cache(system.id, stave.id)
+        self.canvas.note_audition_requested.emit(note.pitch, note.velocity)
         self._edit = _NoteEdit(system, stave, note, False, ledger_layout_before)
         return True
 
@@ -155,12 +157,15 @@ class NoteTool(BaseTool):
         handled = self._edit is not None
         edit = self._edit
         ledger_layout_before = edit.ledger_layout_before if edit is not None else ()
+        audition_pitch: int | None = None
         if edit is not None and edit.preview_geometry is not None:
             edit.note.time = edit.preview_time if edit.preview_time is not None else edit.note.time
             edit.note.pitch = edit.preview_pitch if edit.preview_pitch is not None else edit.note.pitch
             edit.stave.events.insert(edit.original_event_index if edit.original_event_index is not None else len(edit.stave.events), edit.note)
             edit.stave.touch()
             self.canvas.invalidate_system_render_cache(edit.system.id, edit.stave.id)
+            if edit.original_pitch != edit.note.pitch:
+                audition_pitch = edit.note.pitch
         elif edit is not None and edit.pending_duration_target is not None:
             duration_target = self._duration_target_at(edit, position_mm)
             if duration_target is not None:
@@ -171,6 +176,8 @@ class NoteTool(BaseTool):
         if handled and self.canvas is not None:
             self.canvas.repaginate_if_ledger_layout_changed(ledger_layout_before)
             self.canvas.commit_document_change()
+            if audition_pitch is not None:
+                self.canvas.note_audition_requested.emit(audition_pitch, edit.note.velocity)
         return handled
 
     def _duration_target_at(self, edit: _NoteEdit, position_mm: QPointF) -> tuple[System, float] | None:
