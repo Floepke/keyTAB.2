@@ -12,14 +12,15 @@ from pathlib import Path
 from uuid import uuid4
 
 from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, Signal
-from PySide6.QtGui import QAction, QColor, QCursor, QImage, QKeySequence, QPainter, QPalette, QPen, QPolygonF
+from PySide6.QtGui import QAction, QColor, QCursor, QImage, QKeySequence, QPainter, QPainterPath, QPalette, QPen, QPolygonF
 from PySide6.QtWidgets import QInputDialog, QMenu, QWidget
 
-from keytab2_model import KeyTab2Document, NoteEvent, Stave
+from keytab2_model import KeyTab2Document, NoteEvent, SlurEvent, Stave
 from keytab2_model.base_grid import grid_boundaries, grid_line_boundaries
 from ui.drawers.grid_drawer import GridDrawer
 from ui.drawers.beam_drawer import BeamDrawer
 from ui.drawers.note_drawer import NoteDrawer
+from ui.drawers.slur_drawer import SlurDrawer
 from ui.drawers.metrics import SystemMetrics
 from ui.drawers.base import DrawCommandBuffer, DrawerBase
 from ui.drawers.snap_drawer import SnapDrawer
@@ -28,8 +29,8 @@ from ui.drawers.stave_connector_drawer import StaveConnectorDrawer
 from ui.drawers.time_signature_drawer import TimeSignatureDrawer
 from ui.dialogs.stave_dialogs import StaveRangeDialog, StavesDialog
 from ui.render_cache import NoteGeometry, StaveRenderData, build_stave_render_data
-from ui.tools import NoteTool, SystemBreakTool, TimeSignatureTool, ToolManager
-from utils.CONSTANT import SHORTEST_DURATION
+from ui.tools import NoteTool, SlurTool, SystemBreakTool, TimeSignatureTool, ToolManager
+from utils.CONSTANT import SHORTEST_DURATION, SLUR_SEGMENT_COUNT
 from utils.operator import Operator
 
 
@@ -65,7 +66,9 @@ class PaperCanvas(QWidget):
         self._page_system_bounds_cache: dict[str, tuple[tuple[str, ...], dict[str, tuple[float, float]]]] = {}
         self._selected_barline: tuple[str, int] | None = None
         self._selected_note_ids: set[str] = set()
+        self._selected_slur_ids: set[str] = set()
         self._clipboard_notes: list[NoteEvent] = []
+        self._clipboard_slurs: list[SlurEvent] = []
         self._selection_anchor_mm: QPointF | None = None
         self._selection_current_mm: QPointF | None = None
         self._document_change_callback = None
@@ -74,9 +77,11 @@ class PaperCanvas(QWidget):
         self._control_target: tuple[str, str] | None = None
         self._tool_manager = ToolManager(self)
         self._note_tool = NoteTool()
+        self._slur_tool = SlurTool()
         self._system_break_tool = SystemBreakTool()
         self._time_signature_tool = TimeSignatureTool()
         self._tool_manager.register(self._note_tool)
+        self._tool_manager.register(self._slur_tool)
         self._tool_manager.register(self._system_break_tool)
         self._tool_manager.register(self._time_signature_tool)
         self._tool_manager.activate(self._note_tool.TOOL_NAME)
@@ -97,6 +102,7 @@ class PaperCanvas(QWidget):
         self._page_index = 0
         self._left_tool_active = False
         self._selected_note_ids.clear()
+        self._selected_slur_ids.clear()
         self._selection_anchor_mm = None
         self._selection_current_mm = None
         self.invalidate_render_cache()
@@ -139,6 +145,7 @@ class PaperCanvas(QWidget):
         self._stave_render_cache.clear()
         self._selected_barline = None
         self._selected_note_ids.clear()
+        self._selected_slur_ids.clear()
         self._selection_anchor_mm = None
         self._selection_current_mm = None
         self._mouse_stave_target = None
@@ -322,6 +329,7 @@ class PaperCanvas(QWidget):
                     include_snap_bands=False,
                     include_midi_only_ledgers=False,
                     include_editor_controls=False,
+                    slur_segment_count=SLUR_SEGMENT_COUNT,
                 )
                 if page_index < len(self._document.pages) - 1:
                     surface.show_page()
@@ -329,7 +337,7 @@ class PaperCanvas(QWidget):
             if surface is not None:
                 surface.finish()
 
-    def _draw_page_to_cairo(self, context, page, visible_left_mm: float, visible_right_mm: float, visible_top_mm: float, visible_bottom_mm: float, include_snap_bands: bool, include_midi_only_ledgers: bool = True, include_editor_controls: bool = True) -> None:
+    def _draw_page_to_cairo(self, context, page, visible_left_mm: float, visible_right_mm: float, visible_top_mm: float, visible_bottom_mm: float, include_snap_bands: bool, include_midi_only_ledgers: bool = True, include_editor_controls: bool = True, slur_segment_count: int = 24) -> None:
         layout = self._document.layout
         command_buffer = DrawCommandBuffer()
         page_drawer = DrawerBase(context, self.INK_COLOR, command_buffer)
@@ -350,12 +358,13 @@ class PaperCanvas(QWidget):
         time_signature_drawer = TimeSignatureDrawer(context, self.INK_COLOR, command_buffer)
         note_drawer = NoteDrawer(context, self.INK_COLOR, command_buffer)
         beam_drawer = BeamDrawer(context, self.INK_COLOR, command_buffer)
+        slur_drawer = SlurDrawer(context, self.INK_COLOR, command_buffer)
         culling_metrics = SystemMetrics.from_layout(layout, max(stave.scale for system in page.systems for stave in system.staves))
         final_system = self._document.pages[-1].systems[-1]
         for system in page.systems:
             if not self._system_intersects_render_region(page, system, visible_left_mm, visible_right_mm, visible_top_mm, visible_bottom_mm, include_editor_controls):
                 continue
-            self._draw_system(grid_drawer, snap_drawer, stave_drawer, stave_connector_drawer, time_signature_drawer, note_drawer, beam_drawer, page, system, self._system_column_bounds(page, system), visible_top_mm, visible_bottom_mm, include_snap_bands, include_midi_only_ledgers, include_editor_controls, system is final_system)
+            self._draw_system(grid_drawer, snap_drawer, stave_drawer, stave_connector_drawer, time_signature_drawer, note_drawer, beam_drawer, slur_drawer, page, system, self._system_column_bounds(page, system), visible_top_mm, visible_bottom_mm, include_snap_bands, include_midi_only_ledgers, include_editor_controls, system is final_system, slur_segment_count)
         command_buffer.flush()
 
     def _draw_page_metadata(
@@ -433,7 +442,7 @@ class PaperCanvas(QWidget):
             and system_top_mm <= visible_bottom_mm
         )
 
-    def _draw_system(self, grid_drawer: GridDrawer, snap_drawer: SnapDrawer, stave_drawer: StaveDrawer, stave_connector_drawer: StaveConnectorDrawer, time_signature_drawer: TimeSignatureDrawer, note_drawer: NoteDrawer, beam_drawer: BeamDrawer, page, system, column_bounds: tuple[float, float], visible_top_mm: float, visible_bottom_mm: float, include_snap_bands: bool, include_midi_only_ledgers: bool, include_editor_controls: bool, is_final_system: bool) -> None:
+    def _draw_system(self, grid_drawer: GridDrawer, snap_drawer: SnapDrawer, stave_drawer: StaveDrawer, stave_connector_drawer: StaveConnectorDrawer, time_signature_drawer: TimeSignatureDrawer, note_drawer: NoteDrawer, beam_drawer: BeamDrawer, slur_drawer: SlurDrawer, page, system, column_bounds: tuple[float, float], visible_top_mm: float, visible_bottom_mm: float, include_snap_bands: bool, include_midi_only_ledgers: bool, include_editor_controls: bool, is_final_system: bool, slur_segment_count: int) -> None:
         stave_left_positions = self._centered_stave_left_positions(system, stave_drawer, self._document.layout, *column_bounds)
         natural_stave_bounds = [
             stave_drawer.bounds(stave, self._document.layout, left_mm)
@@ -508,6 +517,27 @@ class PaperCanvas(QWidget):
             if self._document.layout.beam_visible:
                 for beam in render_data.beams_in_tick_range(visible_start_tick, visible_end_tick):
                     beam_drawer.draw(beam, stem_width_mm, beam_corner_radius_mm)
+            if self._document.layout.slur_visible:
+                semitone_mm = self._document.layout.engraving_mm(2.0, stave.scale)
+                for slur in (event for event in stave.events if isinstance(event, SlurEvent)):
+                    points = tuple(
+                        (
+                            StaveDrawer.pitch_to_x_mm(60 + rpitch, stave.pitch_range[0], left_mm, semitone_mm),
+                            self._time_to_y_mm(system, tick),
+                        )
+                        for rpitch, tick in (
+                            (slur.x1_rpitch, slur.y1_tick),
+                            (slur.x2_rpitch, slur.y2_tick),
+                            (slur.x3_rpitch, slur.y3_tick),
+                            (slur.x4_rpitch, slur.y4_tick),
+                        )
+                    )
+                    slur_drawer.draw(
+                        points,
+                        self._document.layout.engraving_mm(self._document.layout.slur_width_sides_mm, stave.scale),
+                        self._document.layout.engraving_mm(self._document.layout.slur_width_middle_mm, stave.scale),
+                        slur_segment_count,
+                    )
             if include_editor_controls:
                 self._draw_stave_control(stave_drawer, system, stave, left_mm)
 
@@ -589,6 +619,9 @@ class PaperCanvas(QWidget):
         if self._tool_manager.active_tool is self._time_signature_tool:
             self._draw_time_signature_overlay(painter, exposed_rect)
             return
+        if self._tool_manager.active_tool is self._slur_tool:
+            self._draw_slur_handle_overlay(painter, exposed_rect)
+            return
         drag_preview = self._note_tool.drag_preview
         if drag_preview is not None:
             stave = drag_preview.stave
@@ -642,6 +675,52 @@ class PaperCanvas(QWidget):
                 painter.setBrush(accent)
                 for x_mm, y_mm in note.continuation_dot_centres_mm:
                     painter.drawEllipse(QPointF(x_mm * self.pixels_per_mm, y_mm * self.pixels_per_mm), radius_px, radius_px)
+        finally:
+            painter.restore()
+
+    def _draw_slur_handle_overlay(self, painter: QPainter, exposed_rect: QRect) -> None:
+        """Draw the four direct-manipulation handles for each editable slur."""
+        accent = self.palette().color(QPalette.ColorRole.Highlight)
+        handle_size_px = max(6, round(self.pixels_per_mm * 2.5))
+        handle_rect = QRectF(-handle_size_px * 0.5, -handle_size_px * 0.5, handle_size_px, handle_size_px)
+        painter.save()
+        try:
+            painter.setOpacity(0.85)
+            preview_points = self._slur_tool.drag_preview_points
+            if preview_points is not None:
+                path = QPainterPath(QPointF(preview_points[0][0] * self.pixels_per_mm, preview_points[0][1] * self.pixels_per_mm))
+                path.cubicTo(
+                    QPointF(preview_points[1][0] * self.pixels_per_mm, preview_points[1][1] * self.pixels_per_mm),
+                    QPointF(preview_points[2][0] * self.pixels_per_mm, preview_points[2][1] * self.pixels_per_mm),
+                    QPointF(preview_points[3][0] * self.pixels_per_mm, preview_points[3][1] * self.pixels_per_mm),
+                )
+                preview_stave = self._slur_tool._edit.stave
+                overlay_width_mm = self._document.layout.engraving_mm(
+                    self._document.layout.slur_width_middle_mm,
+                    preview_stave.scale,
+                )
+                overlay_pen = QPen(accent, max(1, round(self.pixels_per_mm * overlay_width_mm)))
+                overlay_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                painter.setPen(overlay_pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawPath(path)
+            painter.setPen(QPen(accent, max(1, round(self.pixels_per_mm * 0.35)), Qt.PenStyle.DashLine))
+            for (start, first_control, second_control, end), in self._slur_tool.visible_handles():
+                points = tuple(QPointF(x_mm * self.pixels_per_mm, y_mm * self.pixels_per_mm) for x_mm, y_mm in (start, first_control, second_control, end))
+                if not any(QRectF(point + QPointF(handle_rect.left(), handle_rect.top()), handle_rect.size()).intersects(QRectF(exposed_rect)) for point in points):
+                    continue
+                painter.drawLine(points[0], points[1])
+                painter.drawLine(points[2], points[3])
+                painter.setPen(QPen(accent, max(1, round(self.pixels_per_mm * 0.35))))
+                handle_fill = QColor.fromRgbF(*self.PAPER_COLOR)
+                handle_fill.setAlpha(64)
+                painter.setBrush(handle_fill)
+                for point in points:
+                    painter.save()
+                    painter.translate(point)
+                    painter.drawRect(handle_rect)
+                    painter.restore()
+                painter.setPen(QPen(accent, max(1, round(self.pixels_per_mm * 0.35)), Qt.PenStyle.DashLine))
         finally:
             painter.restore()
 
@@ -969,9 +1048,12 @@ class PaperCanvas(QWidget):
         if (self._selection_current_mm - self._selection_anchor_mm).manhattanLength() < 0.01:
             hit = self.note_at(self._selection_anchor_mm)
             self._selected_note_ids = {hit[2].id} if hit is not None else set()
+            slur_hit = self._slur_tool._handle_at(self._selection_anchor_mm)
+            self._selected_slur_ids = {slur_hit[2].id} if slur_hit is not None else set()
             return
         rect = QRectF(self._selection_anchor_mm, self._selection_current_mm).normalized()
         selected: set[str] = set()
+        selected_slurs: set[str] = set()
         page = self._current_page()
         drawer = StaveDrawer(None, self.INK_COLOR)
         for system in page.systems:
@@ -981,7 +1063,12 @@ class PaperCanvas(QWidget):
                     bounds = QRectF(note.bounds_mm[0], note.bounds_mm[1], note.bounds_mm[2] - note.bounds_mm[0], note.bounds_mm[3] - note.bounds_mm[1])
                     if rect.intersects(bounds):
                         selected.add(note.event_id)
+                for slur in (event for event in stave.events if isinstance(event, SlurEvent)):
+                    points = self._slur_tool._points_mm(system, stave, left_mm, slur)
+                    if any(rect.contains(QPointF(*point)) for point in points):
+                        selected_slurs.add(slur.id)
         self._selected_note_ids = selected
+        self._selected_slur_ids = selected_slurs
 
     def _selected_notes(self):
         for page in self._document.pages:
@@ -991,9 +1078,25 @@ class PaperCanvas(QWidget):
                         if isinstance(event, NoteEvent) and event.id in self._selected_note_ids:
                             yield system, stave, event
 
+    def _selected_slurs(self):
+        for page in self._document.pages:
+            for system in page.systems:
+                for stave in system.staves:
+                    for event in stave.events:
+                        if isinstance(event, SlurEvent) and event.id in self._selected_slur_ids:
+                            yield system, stave, event
+
+    def select_slur(self, slur: SlurEvent) -> None:
+        """Select one slur when the user grabs any of its handles."""
+        if self._selected_slur_ids != {slur.id} or self._selected_note_ids:
+            self._selected_note_ids.clear()
+            self._selected_slur_ids = {slur.id}
+            self.update()
+
     def copy_selection(self) -> bool:
         self._clipboard_notes = [deepcopy(note) for _, _, note in self._selected_notes()]
-        return bool(self._clipboard_notes)
+        self._clipboard_slurs = [deepcopy(slur) for _, _, slur in self._selected_slurs()]
+        return bool(self._clipboard_notes or self._clipboard_slurs)
 
     def cut_selection(self) -> bool:
         if not self.copy_selection():
@@ -1002,41 +1105,63 @@ class PaperCanvas(QWidget):
 
     def delete_selection(self) -> bool:
         """Remove selected notes without changing the clipboard."""
-        if not self._selected_note_ids:
+        if not self._selected_note_ids and not self._selected_slur_ids:
             return False
         changed = False
         for page in self._document.pages:
             for system in page.systems:
                 for stave in system.staves:
                     original_count = len(stave.events)
-                    stave.events[:] = [event for event in stave.events if event.id not in self._selected_note_ids]
+                    stave.events[:] = [
+                        event
+                        for event in stave.events
+                        if event.id not in self._selected_note_ids and event.id not in self._selected_slur_ids
+                    ]
                     if len(stave.events) != original_count:
                         stave.touch()
                         system.touch()
                         changed = True
         if changed:
             self._selected_note_ids.clear()
+            self._selected_slur_ids.clear()
             self.invalidate_render_cache()
             self.commit_document_change()
         return changed
 
     def paste_selection(self) -> bool:
-        if not self._clipboard_notes or self._mouse_stave_target is None or self.mouse_time is None or self.mouse_pitch is None:
+        if (not self._clipboard_notes and not self._clipboard_slurs) or self._mouse_stave_target is None or self.mouse_time is None or self.mouse_pitch is None:
             return False
         system, stave, _ = self._mouse_stave_target
-        source_time = min(note.time for note in self._clipboard_notes)
-        source_pitch = min(note.pitch for note in self._clipboard_notes)
+        source_time = min(
+            *(note.time for note in self._clipboard_notes),
+            *(tick for slur in self._clipboard_slurs for tick in (slur.y1_tick, slur.y2_tick, slur.y3_tick, slur.y4_tick)),
+        )
+        source_pitch = min(
+            *(note.pitch for note in self._clipboard_notes),
+            *(60 + rpitch for slur in self._clipboard_slurs for rpitch in (slur.x1_rpitch, slur.x2_rpitch, slur.x3_rpitch, slur.x4_rpitch)),
+        )
         pasted = [deepcopy(note) for note in self._clipboard_notes]
+        pasted_slurs = [deepcopy(slur) for slur in self._clipboard_slurs]
         for note in pasted:
             note.id = str(uuid4())
             note.time += self.mouse_time - source_time
             note.pitch += self.mouse_pitch - source_pitch
             if note.time < system.start_tick or note.time + note.duration > system.end_tick or not NoteTool._can_place(stave, note):
                 return False
-        stave.events.extend(pasted)
+        for slur in pasted_slurs:
+            slur.id = str(uuid4())
+            tick_offset = int(self.mouse_time - source_time)
+            pitch_offset = self.mouse_pitch - source_pitch
+            for attribute in ("y1_tick", "y2_tick", "y3_tick", "y4_tick"):
+                setattr(slur, attribute, getattr(slur, attribute) + tick_offset)
+            for attribute in ("x1_rpitch", "x2_rpitch", "x3_rpitch", "x4_rpitch"):
+                setattr(slur, attribute, getattr(slur, attribute) + pitch_offset)
+            self._slur_tool._constrain_to_page(slur, system, stave, self.stave_left_mm(system, stave))
+        stave.events.extend((*pasted, *pasted_slurs))
         stave.touch()
         system.touch()
         self._selected_note_ids = {note.id for note in pasted}
+        self._selected_slur_ids = {slur.id for slur in pasted_slurs}
         self.invalidate_system_render_cache(system.id, stave.id)
         self.commit_document_change()
         return True
@@ -1272,6 +1397,13 @@ class PaperCanvas(QWidget):
 
     def select_time_signature_mode(self) -> None:
         self._tool_manager.activate(TimeSignatureTool.TOOL_NAME)
+        self.update()
+
+    def select_slur_mode(self, hand: str = "left") -> None:
+        slur_tool = self._tool_manager.activate(SlurTool.TOOL_NAME)
+        if not isinstance(slur_tool, SlurTool):
+            raise RuntimeError("Registered slur tool has an unexpected type")
+        slur_tool.set_hand(hand)
         self.update()
 
     def set_input_snap_ticks(self, snap_ticks: float) -> None:
@@ -1603,12 +1735,29 @@ class PaperCanvas(QWidget):
             right_mm,
         )
         notation_right_mm = right_mm
+        top_mm = system.top_mm
+        bottom_mm = system.top_mm + system.height_mm
         for stave, stave_left_mm in zip(system.staves, stave_left_positions, strict=True):
             render_data = self._stave_render_data(system, stave, stave_left_mm)
             geometries = (*render_data.notes.geometries, *render_data.beams.geometries)
             if geometries:
                 left_mm = min(left_mm, *(geometry.bounds_mm[0] for geometry in geometries))
                 notation_right_mm = max(notation_right_mm, *(geometry.right_extent_mm for geometry in geometries))
+            if self._document.layout.slur_visible:
+                semitone_mm = self._document.layout.engraving_mm(2.0, stave.scale)
+                for slur in (event for event in stave.events if isinstance(event, SlurEvent)):
+                    for rpitch, tick in (
+                        (slur.x1_rpitch, slur.y1_tick),
+                        (slur.x2_rpitch, slur.y2_tick),
+                        (slur.x3_rpitch, slur.y3_tick),
+                        (slur.x4_rpitch, slur.y4_tick),
+                    ):
+                        x_mm = StaveDrawer.pitch_to_x_mm(60 + rpitch, stave.pitch_range[0], stave_left_mm, semitone_mm)
+                        y_mm = self._time_to_y_mm(system, tick)
+                        left_mm = min(left_mm, max(0.0, x_mm))
+                        notation_right_mm = max(notation_right_mm, min(page.width_mm, x_mm))
+                        top_mm = min(top_mm, max(0.0, y_mm))
+                        bottom_mm = max(bottom_mm, min(page.height_mm, y_mm))
         if self._document.layout.measure_numbers_visible and system.staves:
             largest_scale = max(stave.scale for stave in system.staves)
             metrics = SystemMetrics.from_layout(self._document.layout, largest_scale)
@@ -1619,7 +1768,6 @@ class PaperCanvas(QWidget):
             right_mm = notation_right_mm + metrics.measure_number_offset_mm + number_size_mm * 8.0
         else:
             right_mm = notation_right_mm
-        top_mm = system.top_mm
         if self._document.layout.time_signature_visible and system.staves:
             stave_scale = system.staves[0].scale
             scale = self._document.layout.engraving_scale(stave_scale)
@@ -1635,9 +1783,8 @@ class PaperCanvas(QWidget):
             top_mm = min(top_mm, system.top_mm - self.STAVE_CONTROL_GAP_MM - self.STAVE_CONTROL_SIZE_MM)
             final_system = [candidate for document_page in self._document.pages for candidate in document_page.systems][-1]
             if system is final_system:
-                bottom_mm = system.top_mm + system.height_mm + self.ADD_MEASURE_CONTROL_GAP_MM + self.ADD_MEASURE_CONTROL_SIZE_MM
-                return left_mm, right_mm, top_mm, bottom_mm
-        return left_mm, right_mm, top_mm, system.top_mm + system.height_mm
+                bottom_mm = max(bottom_mm, system.top_mm + system.height_mm + self.ADD_MEASURE_CONTROL_GAP_MM + self.ADD_MEASURE_CONTROL_SIZE_MM)
+        return left_mm, right_mm, top_mm, bottom_mm
 
     def _measure_ticks(self) -> int:
         return self._document.time_per_quarter * 4

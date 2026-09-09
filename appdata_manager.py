@@ -19,6 +19,8 @@ class AppDataManager(TomlStore):
 
 
 _appdata_manager: AppDataManager | None = None
+DEFAULT_THEME = "dark"
+THEMES = {"light", "dark"}
 
 
 def get_appdata_manager() -> AppDataManager:
@@ -28,3 +30,18 @@ def get_appdata_manager() -> AppDataManager:
         manager.load()
         _appdata_manager = manager
     return _appdata_manager
+
+
+def get_theme() -> str:
+    """Return the persisted application theme, falling back to dark."""
+    theme = str(get_appdata_manager().get("theme", DEFAULT_THEME))
+    return theme if theme in THEMES else DEFAULT_THEME
+
+
+def set_theme(theme: str) -> None:
+    """Persist one of the supported application themes."""
+    if theme not in THEMES:
+        raise ValueError(f"Unsupported theme: {theme}")
+    manager = get_appdata_manager()
+    manager.set("theme", theme)
+    manager.save()

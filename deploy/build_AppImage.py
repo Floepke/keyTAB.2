@@ -29,6 +29,74 @@ LINUXDEPLOY_URL = (
 )
 APP_ID = "org.philipbergwerf.keytab2"
 APP_NAME = "keyTAB2"
+UNUSED_QT_MODULES = (
+    "Qt3DAnimation",
+    "Qt3DCore",
+    "Qt3DExtras",
+    "Qt3DInput",
+    "Qt3DLogic",
+    "Qt3DRender",
+    "QtBluetooth",
+    "QtCharts",
+    "QtDataVisualization",
+    "QtGraphs",
+    "QtHelp",
+    "QtLocation",
+    "QtMultimedia",
+    "QtMultimediaWidgets",
+    "QtNetworkAuth",
+    "QtNfc",
+    "QtPdf",
+    "QtPdfWidgets",
+    "QtPositioning",
+    "QtQml",
+    "QtQmlCompiler",
+    "QtQmlCore",
+    "QtQmlLocalStorage",
+    "QtQmlMeta",
+    "QtQmlModels",
+    "QtQmlNetwork",
+    "QtQmlWorkerScript",
+    "QtQmlXmlListModel",
+    "QtQuick",
+    "QtQuick3D",
+    "QtQuickControls2",
+    "QtQuickWidgets",
+    "QtRemoteObjects",
+    "QtScxml",
+    "QtSensors",
+    "QtSerialBus",
+    "QtSerialPort",
+    "QtSpatialAudio",
+    "QtSql",
+    "QtStateMachine",
+    "QtSvg",
+    "QtSvgWidgets",
+    "QtTest",
+    "QtTextToSpeech",
+    "QtUiTools",
+    "QtWebChannel",
+    "QtWebEngineCore",
+    "QtWebEngineQuick",
+    "QtWebEngineQuickDelegatesQml",
+    "QtWebEngineWidgets",
+    "QtWebSockets",
+    "QtWebView",
+    "QtWebViewQuick",
+    "QtVirtualKeyboard",
+    "QtVirtualKeyboardQml",
+    "QtXml",
+    "QtXmlPatterns",
+)
+REQUIRED_QT_PLUGIN_DIRECTORIES = {"platforms"}
+REQUIRED_QT_PLATFORM_PLUGINS = {
+    "libqwayland.so",
+    "libqxcb.so",
+}
+UNUSED_QT_RUNTIME_LIBRARIES = (
+    "libQt6EglFSDeviceIntegration.so*",
+    "libQt6EglFsKmsSupport.so*",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -85,6 +153,68 @@ def find_library_path(name: str) -> Path | None:
         if candidate.is_file():
             return candidate
     return None
+
+
+def strip_unused_qt_runtime(bundle_dir: Path) -> None:
+    """Remove Qt Quick/QML and optional plugin payload unused by the Widgets app."""
+    qt_dir = bundle_dir / "_internal" / "PySide6" / "Qt"
+    if not qt_dir.is_dir():
+        return
+    shutil.rmtree(qt_dir / "qml", ignore_errors=True)
+    shutil.rmtree(qt_dir / "translations" / "qtwebengine_locales", ignore_errors=True)
+    plugin_dir = qt_dir / "plugins"
+    for plugin_path in plugin_dir.iterdir() if plugin_dir.is_dir() else ():
+        if plugin_path.name not in REQUIRED_QT_PLUGIN_DIRECTORIES:
+            shutil.rmtree(plugin_path, ignore_errors=True)
+    platform_dir = plugin_dir / "platforms"
+    for plugin_path in platform_dir.iterdir() if platform_dir.is_dir() else ():
+        if plugin_path.name not in REQUIRED_QT_PLATFORM_PLUGINS:
+            plugin_path.unlink()
+    library_dirs = (qt_dir / "lib", bundle_dir / "_internal")
+    for library_dir in library_dirs:
+        for module in UNUSED_QT_MODULES:
+            for library in library_dir.glob(f"libQt6{module[2:]}.so*"):
+                library.unlink()
+        for pattern in UNUSED_QT_RUNTIME_LIBRARIES:
+            for library in library_dir.glob(pattern):
+                library.unlink()
+
+
+def include_qt_wayland_plugin(bundle_dir: Path) -> None:
+    """Stage the Qt Wayland platform plugin omitted by PyInstaller's hook."""
+    from PySide6 import __file__ as pyside6_init
+
+    source = Path(pyside6_init).parent / "Qt" / "plugins" / "platforms" / "libqwayland.so"
+    if not source.is_file():
+        raise RuntimeError(f"Could not find the Qt Wayland platform plugin: {source}")
+    target = bundle_dir / "_internal" / "PySide6" / "Qt" / "plugins" / "platforms" / source.name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+
+
+def prepare_pango_cffi_runtime(bundle_dir: Path) -> None:
+    """Pre-create CFFI cache directories required by the Pango bindings."""
+    for package in ("pangocffi", "pangocairocffi"):
+        (bundle_dir / "_internal" / package / "_generated").mkdir(parents=True, exist_ok=True)
+
+
+def copy_app_icon(source: Path, target: Path) -> None:
+    """Create the exact 512px PNG size required by linuxdeploy."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QImage
+
+    image = QImage(str(source))
+    if image.isNull():
+        raise RuntimeError(f"Could not read application icon: {source}")
+    icon = image.scaled(
+        512,
+        512,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if not icon.save(str(target), "PNG"):
+        raise RuntimeError(f"Could not write application icon: {target}")
 
 
 def write_desktop_file(appdir: Path) -> Path:
@@ -162,12 +292,12 @@ def main() -> int:
                 f"--distpath={dist_dir}",
                 f"--workpath={work_dir}",
                 f"--specpath={spec_dir}",
-                "--collect-all=PySide6",
                 "--collect-all=cairocffi",
                 "--collect-all=pangocffi",
                 "--collect-all=pangocairocffi",
                 "--hidden-import=fluidsynth",
                 "--collect-all=fluidsynth",
+                *(f"--exclude-module=PySide6.{module}" for module in UNUSED_QT_MODULES),
                 *args.extra_pyinstaller_args,
                 str(entry_script),
             ],
@@ -178,6 +308,9 @@ def main() -> int:
         executable = bundle_dir / APP_NAME
         if not executable.is_file():
             raise RuntimeError("PyInstaller did not produce the expected executable.")
+        include_qt_wayland_plugin(bundle_dir)
+        strip_unused_qt_runtime(bundle_dir)
+        prepare_pango_cffi_runtime(bundle_dir)
 
         appdir = build_root / "AppDir"
         app_library_dir = appdir / "usr" / "lib" / APP_NAME
@@ -188,8 +321,7 @@ def main() -> int:
         launcher.symlink_to(Path("../lib") / APP_NAME / APP_NAME)
 
         icon_target = appdir / "usr" / "share" / "icons" / "hicolor" / "512x512" / "apps" / f"{APP_NAME}.png"
-        icon_target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(icon_source, icon_target)
+        copy_app_icon(icon_source, icon_target)
         desktop_file = write_desktop_file(appdir)
         write_apprun(appdir)
 

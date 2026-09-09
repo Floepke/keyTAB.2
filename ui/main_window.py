@@ -9,6 +9,7 @@ from PySide6.QtCore import QEvent, QPointF, QSize, Qt
 from PySide6.QtGui import QAction, QActionGroup, QCursor, QKeySequence
 from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox, QScrollArea, QSizePolicy, QToolBar, QVBoxLayout, QWidget
 
+from appdata_manager import get_theme, set_theme
 from file_manager import FileManager
 from icons import get_qicon
 from ui.dialogs.info_dialog import InfoDialog
@@ -183,7 +184,7 @@ class MainWindow(QMainWindow):
         self._create_menus()
         self._create_toolbar()
         self._create_snap_dock()
-        self._set_theme("dark")
+        self._set_theme(get_theme(), persist=False)
         self.statusBar().showMessage("New score")
         self._update_title()
 
@@ -304,12 +305,28 @@ class MainWindow(QMainWindow):
         self.time_signature_action.triggered.connect(self.paper_canvas.select_time_signature_mode)
         toolbar.addAction(self.time_signature_action)
 
+        self.left_slur_action = QAction(get_qicon("mirror:slur", (28, 28)), "", self)
+        self.left_slur_action.setObjectName("leftSlurAction")
+        self.left_slur_action.setToolTip("Insert and edit left-hand slurs")
+        self.left_slur_action.setCheckable(True)
+        self.left_slur_action.triggered.connect(lambda: self.paper_canvas.select_slur_mode("left"))
+        toolbar.addAction(self.left_slur_action)
+
+        self.right_slur_action = QAction(get_qicon("slur", (28, 28)), "", self)
+        self.right_slur_action.setObjectName("rightSlurAction")
+        self.right_slur_action.setToolTip("Insert and edit right-hand slurs")
+        self.right_slur_action.setCheckable(True)
+        self.right_slur_action.triggered.connect(lambda: self.paper_canvas.select_slur_mode("right"))
+        toolbar.addAction(self.right_slur_action)
+
         note_hand_group = QActionGroup(toolbar)
         note_hand_group.setExclusive(True)
         note_hand_group.addAction(self.left_note_input_action)
         note_hand_group.addAction(self.right_note_input_action)
         note_hand_group.addAction(self.system_break_action)
         note_hand_group.addAction(self.time_signature_action)
+        note_hand_group.addAction(self.left_slur_action)
+        note_hand_group.addAction(self.right_slur_action)
         self._note_hand_group = note_hand_group
         self._note_hand_group.triggered.connect(lambda _action: self._refresh_toolbar_icons())
         self.paper_canvas.note_hand_changed.connect(self._sync_note_input_toolbar)
@@ -495,13 +512,15 @@ class MainWindow(QMainWindow):
         if document is not None:
             self._restore_history_document(document)
 
-    def _set_theme(self, theme: str) -> None:
+    def _set_theme(self, theme: str, *, persist: bool = True) -> None:
         self._theme = theme
         apply_theme(QApplication.instance(), theme)
         self._refresh_toolbar_icons()
         self.snap_dock.selector.refresh_icons(THEMES[theme]["text"])
         self.light_theme_action.setChecked(theme == "light")
         self.dark_theme_action.setChecked(theme == "dark")
+        if persist:
+            set_theme(theme)
 
     def _refresh_toolbar_icons(self) -> None:
         colors = THEMES[self._theme]

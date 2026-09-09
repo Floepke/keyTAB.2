@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 
+from appdata_manager import get_theme
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
@@ -25,7 +26,7 @@ def main() -> int:
     app.setApplicationName("keyTAB 2")
     app.setOrganizationName("keyTAB")
     app.setWindowIcon(get_qicon("keyTAB"))
-    apply_theme(app, "dark")
+    apply_theme(app, get_theme())
 
     window = MainWindow()
     window.show()

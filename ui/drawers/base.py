@@ -27,6 +27,7 @@ DRAW_LAYERS = {
     "continuation_dot": 40,
     "beam": 50,
     "beam_connector": 50,
+    "slur": 55,
     "measure_number": 60,
     "editor_control": 70,
 }

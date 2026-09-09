@@ -7,7 +7,7 @@ from unittest.mock import patch
 from PySide6.QtCore import QPoint, QPointF, QRect
 from PySide6.QtWidgets import QApplication
 
-from keytab2_model import BaseGrid, BeamEvent, KeyTab2Document, NoteEvent, Stave
+from keytab2_model import BaseGrid, BeamEvent, KeyTab2Document, NoteEvent, SlurEvent, Stave
 from ui.drawers.stave_drawer import StaveDrawer
 from ui.drawers.note_drawer import NoteDrawer
 from ui.drawers.base import DrawCommandBuffer, DrawerBase
@@ -376,6 +376,32 @@ class RenderCacheTests(unittest.TestCase):
             top_mm,
             system.top_mm,
             include_editor_controls=True,
+        ))
+
+    def test_system_tile_culling_includes_slurs_outside_the_stave(self) -> None:
+        document = KeyTab2Document.new()
+        page = document.pages[0]
+        system = page.systems[0]
+        stave = system.staves[0]
+        tick_at_page_bottom = round(
+            system.start_tick + (page.height_mm - system.top_mm) * (system.end_tick - system.start_tick) / system.height_mm
+        )
+        stave.events.append(SlurEvent(x1_rpitch=0, y1_tick=system.start_tick, x4_rpitch=0, y4_tick=tick_at_page_bottom))
+        stave.touch()
+        canvas = PaperCanvas(document)
+
+        left_mm, right_mm, top_mm, bottom_mm = canvas._system_render_bounds(page, system, include_editor_controls=False)
+
+        self.assertLessEqual(top_mm, system.top_mm)
+        self.assertAlmostEqual(bottom_mm, page.height_mm, places=2)
+        self.assertTrue(canvas._system_intersects_render_region(
+            page,
+            system,
+            left_mm,
+            right_mm,
+            page.height_mm - 1.0,
+            page.height_mm,
+            include_editor_controls=False,
         ))
 
     def test_system_render_bounds_include_notation_and_measure_number_overhang(self) -> None:

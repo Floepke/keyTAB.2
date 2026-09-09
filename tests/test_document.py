@@ -312,6 +312,18 @@ class KeyTab2DocumentTests(unittest.TestCase):
         self.assertIsInstance(restored.pages[0].events[0], LineBreakEvent)
         self.assertEqual(restored.timeline_events[-1].tempo, 96)
 
+    def test_system_split_assigns_slurs_using_the_first_handle_tick(self) -> None:
+        document = KeyTab2Document.new()
+        page = document.pages[0]
+        system = page.systems[0]
+        slur = SlurEvent(x1_rpitch=0, y1_tick=1280, x4_rpitch=7, y4_tick=1536)
+        system.staves[0].events.append(slur)
+
+        following = document.split_system_at(page.id, system.id, 1024)
+
+        self.assertEqual(system.staves[0].events, [])
+        self.assertEqual(following.staves[0].events, [slur])
+
     def test_every_registered_event_type_loads_from_json_data(self) -> None:
         for event_type, event_class in EVENT_TYPES.items():
             with self.subTest(event_type=event_type):

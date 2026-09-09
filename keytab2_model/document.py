@@ -382,12 +382,12 @@ class KeyTab2Document:
             for stave_index, stave in enumerate(system.staves):
                 stave.events = [
                     event for event in stave_events[stave_index]
-                    if start_tick <= int(getattr(event, "time", getattr(event, "start_tick", 0))) < final_tick
+                    if start_tick <= self._event_start_tick(event) < final_tick
                 ]
                 stave.touch()
             system.events = [
                 event for event in system_events
-                if start_tick <= int(getattr(event, "time", getattr(event, "start_tick", 0))) < final_tick
+                if start_tick <= self._event_start_tick(event) < final_tick
             ]
             system.touch()
         if not retained:
@@ -509,9 +509,14 @@ class KeyTab2Document:
         before: list[Event] = []
         after: list[Event] = []
         for event in events:
-            event_time = int(getattr(event, "time", getattr(event, "start_tick", 0)))
+            event_time = KeyTab2Document._event_start_tick(event)
             (after if event_time >= time else before).append(event)
         return before, after
+
+    @staticmethod
+    def _event_start_tick(event: Event) -> int:
+        """Return the timeline position that determines an event's system owner."""
+        return int(getattr(event, "time", getattr(event, "start_tick", getattr(event, "y1_tick", 0))))
 
     @staticmethod
     def _split_crossing_notes(original: Stave, following: Stave, time: int) -> None:
