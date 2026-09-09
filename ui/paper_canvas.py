@@ -499,6 +499,11 @@ class PaperCanvas(QWidget):
                 self._document.layout,
                 left_mm,
                 {note.event_id: note.continuation_dot_centres_mm for note in render_data.notes.geometries},
+                {
+                    note.event_id: note.stop_points_mm[1]
+                    for note in render_data.notes.geometries
+                    if note.stop_points_mm is not None
+                },
                 include_midi_only_ledgers=include_midi_only_ledgers,
             )
             dot_diameter_mm = self._document.layout.engraving_mm(self._document.layout.note_continuation_dot_size_mm, stave.scale)

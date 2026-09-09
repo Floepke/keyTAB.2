@@ -154,6 +154,23 @@ class StaveDrawerTests(unittest.TestCase):
         self.assertIn(unittest.mock.call(7.0, 47.0), context.move_to.call_args_list)
         self.assertIn(unittest.mock.call(7.0, 53.5), context.line_to.call_args_list)
 
+    def test_stave_drawer_draws_ledger_groups_at_stop_symbols(self) -> None:
+        context = Mock()
+        system = System(start_tick=0, end_tick=1024, top_mm=20.0, height_mm=40.0)
+        note = NoteEvent(time=512, duration=128, pitch=58)
+        stave = Stave(pitch_range=[60, 72], events=[note])
+
+        StaveDrawer(context, (0.0, 0.0, 0.0)).draw(
+            system,
+            stave,
+            Layout(scale=0.5),
+            10.0,
+            stop_centres={note.id: (7.0, 45.0)},
+        )
+
+        self.assertIn(unittest.mock.call(7.0, 42.0), context.move_to.call_args_list)
+        self.assertIn(unittest.mock.call(7.0, 48.5), context.line_to.call_args_list)
+
     def test_ledger_lines_expand_system_stave_bounds(self) -> None:
         system = System(start_tick=0, end_tick=1024)
         stave = Stave(pitch_range=[60, 72], events=[NoteEvent(time=512, duration=128, pitch=58)])

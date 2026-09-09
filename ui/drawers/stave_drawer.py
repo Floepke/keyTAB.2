@@ -54,7 +54,16 @@ class StaveDrawer(DrawerBase):
             self.pitch_to_x_mm(black_pitches[-1], low_pitch, left_mm, semitone_mm),
         )
 
-    def draw(self, system: System, stave: Stave, layout: Layout, left_mm: float, continuation_dot_centres: dict[str, tuple[tuple[float, float], ...]] | None = None, include_midi_only_ledgers: bool = True) -> None:
+    def draw(
+        self,
+        system: System,
+        stave: Stave,
+        layout: Layout,
+        left_mm: float,
+        continuation_dot_centres: dict[str, tuple[tuple[float, float], ...]] | None = None,
+        stop_centres: dict[str, tuple[float, float]] | None = None,
+        include_midi_only_ledgers: bool = True,
+    ) -> None:
         low_pitch, high_pitch = stave.pitch_range
         black_pitches = stave.natural_line_pitches()
         if not black_pitches:
@@ -76,7 +85,8 @@ class StaveDrawer(DrawerBase):
                 continue
             start_y_mm = system.top_mm + (max(event.time, system.start_tick) - system.start_tick) * system.height_mm / (system.end_tick - system.start_tick)
             dot_centres = continuation_dot_centres.get(event.id, ()) if continuation_dot_centres else ()
-            for _, y_center_mm in ((0.0, start_y_mm + semitone_mm), *dot_centres):
+            stop_centre = stop_centres.get(event.id) if stop_centres else None
+            for _, y_center_mm in ((0.0, start_y_mm + semitone_mm), *dot_centres, *((stop_centre,) if stop_centre else ())):
                 for pitch in stave.ledger_line_pitches_for_pitch(event.pitch):
                     if not include_midi_only_ledgers and self._ledger_color(pitch) is not None:
                         continue
