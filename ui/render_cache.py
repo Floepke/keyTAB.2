@@ -182,7 +182,15 @@ class StaveRenderData:
         return None
 
 
-def build_stave_render_data(system: System, stave: Stave, layout: Layout, left_mm: float, measure_ticks: int, base_grid: list[BaseGrid] | None = None) -> StaveRenderData:
+def build_stave_render_data(
+    system: System,
+    stave: Stave,
+    layout: Layout,
+    left_mm: float,
+    measure_ticks: int,
+    base_grid: list[BaseGrid] | None = None,
+    following_starts_by_hand: dict[str, tuple[int, ...]] | None = None,
+) -> StaveRenderData:
     """Build immutable stave geometry once after a stave revision changes."""
     notes = tuple(sorted((event for event in stave.events if isinstance(event, NoteEvent)), key=lambda event: (event.time, event.pitch, event.id)))
     resolved_base_grid = base_grid or [BaseGrid()]
@@ -202,6 +210,8 @@ def build_stave_render_data(system: System, stave: Stave, layout: Layout, left_m
         ends_by_hand[hand].append(note.time + note.duration)
     for hand in starts_by_hand:
         ends_by_hand[hand].sort()
+
+    following_starts_by_hand = following_starts_by_hand or {}
 
     geometries: list[NoteGeometry] = []
     for note in notes:
@@ -233,10 +243,14 @@ def build_stave_render_data(system: System, stave: Stave, layout: Layout, left_m
         narrow_black = note.pitch % 12 in {1, 3, 6, 8, 10} and layout.black_note_rule == "below_stem" and has_adjacent_note
         head = build_notehead_outline(x_mm, y_start_mm, hand, form, is_up, filled, semitone_mm, layout.note_width_scaling * (0.7 if narrow_black else 1.0), layout.notehead_height_scaling, layout.notehead_tilt)
         next_start_index = bisect_left(starts_by_hand[hand], end_tick)
+        has_following_note = (
+            next_start_index != len(starts_by_hand[hand])
+            and starts_by_hand[hand][next_start_index] == end_tick
+        ) or any(start_tick == end_tick for start_tick in following_starts_by_hand.get(hand, ()))
         stop_points = None
-        if not note.continues_to_next and (next_start_index == len(starts_by_hand[hand]) or starts_by_hand[hand][next_start_index] > end_tick):
-            stop_size_mm = layout.engraving_mm(layout.note_stopsign_thickness_mm, stave.scale) * 2.0
-            stop_points = ((x_mm - stop_size_mm * 0.5, y_end_mm - stop_size_mm), (x_mm, y_end_mm), (x_mm + stop_size_mm * 0.5, y_end_mm - stop_size_mm))
+        if not note.continues_to_next and not has_following_note:
+            head_width_mm = max(point[0] for point in head.points_mm) - min(point[0] for point in head.points_mm)
+            stop_points = ((x_mm - head_width_mm * 0.5, y_end_mm - head_width_mm), (x_mm, y_end_mm), (x_mm + head_width_mm * 0.5, y_end_mm - head_width_mm))
         dot_ticks = set()
         for tick_list in (starts_by_hand[hand], ends_by_hand[hand]):
             first = bisect_right(tick_list, start_tick)

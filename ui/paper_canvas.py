@@ -579,13 +579,48 @@ class PaperCanvas(QWidget):
                 drawer.draw_line(control_x_mm, centre_y_mm - symbol_radius_mm, control_x_mm, centre_y_mm + symbol_radius_mm, 0.5, tags=("editor_control",))
 
     def _stave_render_data(self, system, stave, left_mm: float) -> StaveRenderData:
+        systems = [candidate for page in self._document.pages for candidate in page.systems]
+        system_index = systems.index(system)
+        stave_index = next(index for index, candidate in enumerate(system.staves) if candidate is stave)
+        following_stave = (
+            systems[system_index + 1].staves[stave_index]
+            if system_index + 1 < len(systems) and stave_index < len(systems[system_index + 1].staves)
+            else None
+        )
+        following_starts_by_hand = {
+            hand: tuple(
+                note.time
+                for note in following_stave.events
+                if isinstance(note, NoteEvent) and note.hand == hand
+            )
+            for hand in ("left", "right")
+        } if following_stave is not None else {}
         key = (system.id, stave.id)
         layout_signature = json.dumps(asdict(self._document.layout), sort_keys=True, separators=(",", ":"))
         base_grid_signature = json.dumps([asdict(segment) for segment in self._document.base_grid], sort_keys=True, separators=(",", ":"))
-        cache_key = (system.revision, stave.revision, left_mm, layout_signature, base_grid_signature)
+        cache_key = (
+            system.revision,
+            stave.revision,
+            following_stave.id if following_stave is not None else None,
+            following_stave.revision if following_stave is not None else None,
+            left_mm,
+            layout_signature,
+            base_grid_signature,
+        )
         cached = self._stave_render_cache.get(key)
         if cached is None or cached[0] != cache_key:
-            cached = (cache_key, build_stave_render_data(system, stave, self._document.layout, left_mm, self._measure_ticks(), self._document.base_grid))
+            cached = (
+                cache_key,
+                build_stave_render_data(
+                    system,
+                    stave,
+                    self._document.layout,
+                    left_mm,
+                    self._measure_ticks(),
+                    self._document.base_grid,
+                    following_starts_by_hand,
+                ),
+            )
             self._stave_render_cache[key] = cached
         return cached[1]
 

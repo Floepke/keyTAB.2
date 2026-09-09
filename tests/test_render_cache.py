@@ -120,7 +120,25 @@ class RenderCacheTests(unittest.TestCase):
         note = data.notes.geometries[0]
 
         self.assertIsNotNone(note.stop_points_mm)
+        self.assertAlmostEqual(
+            max(x_mm for x_mm, _ in note.stop_points_mm) - min(x_mm for x_mm, _ in note.stop_points_mm),
+            max(x_mm for x_mm, _ in note.head.points_mm) - min(x_mm for x_mm, _ in note.head.points_mm),
+        )
         self.assertEqual(len(note.continuation_dot_centres_mm), 1)
+
+    def test_following_system_note_removes_same_hand_stop(self) -> None:
+        document = KeyTab2Document.new()
+        page = document.pages[0]
+        system = page.systems[0]
+        system.staves[0].events.append(NoteEvent(time=0, duration=1024, pitch=60, hand="left"))
+        following_system = document.split_system_at(page.id, system.id, 1024)
+        following_system.staves[0].events.append(NoteEvent(time=1024, duration=256, pitch=64, hand="left"))
+        following_system.staves[0].touch()
+        canvas = PaperCanvas(document)
+
+        data = canvas._stave_render_data(system, system.staves[0], canvas.stave_left_mm(system, system.staves[0]))
+
+        self.assertIsNone(data.notes.geometries[0].stop_points_mm)
 
     def test_midi_body_does_not_occlude_a_grid_line(self) -> None:
         document = KeyTab2Document.new()
