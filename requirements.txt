@@ -3,3 +3,4 @@ PySide6>=6.10.3,<6.11
 cairocffi>=1.7,<2
 pangocffi>=0.14,<1
 pangocairocffi>=0.7,<1
+pyfluidsynth>=1.3,<2

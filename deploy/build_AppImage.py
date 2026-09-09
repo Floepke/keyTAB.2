@@ -110,6 +110,12 @@ def write_apprun(appdir: Path) -> None:
         "#!/bin/sh\n"
         "HERE=\"$(dirname \"$(readlink -f \"$0\")\")\"\n"
         "export LD_LIBRARY_PATH=\"$HERE/usr/lib:$HERE/usr/lib/keyTAB2/_internal:$LD_LIBRARY_PATH\"\n"
+        "for lib in \"$HERE/usr/lib/libfluidsynth.so\"*; do\n"
+        "  if [ -f \"$lib\" ]; then\n"
+        "    export PYFLUIDSYNTH_LIB=\"$lib\"\n"
+        "    break\n"
+        "  fi\n"
+        "done\n"
         "exec \"$HERE/usr/bin/keyTAB2\" \"$@\"\n",
         encoding="utf-8",
     )
@@ -160,6 +166,8 @@ def main() -> int:
                 "--collect-all=cairocffi",
                 "--collect-all=pangocffi",
                 "--collect-all=pangocairocffi",
+                "--hidden-import=fluidsynth",
+                "--collect-all=fluidsynth",
                 *args.extra_pyinstaller_args,
                 str(entry_script),
             ],
@@ -201,7 +209,7 @@ def main() -> int:
             "--icon-file",
             str(icon_target),
         ]
-        for library_name in ("libcairo.so", "libpango-1.0.so", "libpangocairo-1.0.so"):
+        for library_name in ("libcairo.so", "libpango-1.0.so", "libpangocairo-1.0.so", "libfluidsynth.so"):
             library_path = find_library_path(library_name)
             if library_path is not None:
                 deploy_command.extend(("--library", str(library_path)))

@@ -65,6 +65,62 @@ class SelectionTests(unittest.TestCase):
 
         self.assertEqual(self.canvas._selected_note_ids, {self.stave.events[0].id})
 
+    def test_clicking_a_note_selects_it_before_editing(self) -> None:
+        self._add_note(60, 256)
+        note_id = self.stave.events[0].id
+        hands: list[str] = []
+        self.canvas.note_hand_changed.connect(hands.append)
+        geometry = self.canvas._stave_render_data(self.system, self.stave, self.left_mm).notes.geometries[0]
+        point_mm = QPointF(
+            sum(x_mm for x_mm, _ in geometry.head.points_mm) / len(geometry.head.points_mm),
+            sum(y_mm for _, y_mm in geometry.head.points_mm) / len(geometry.head.points_mm),
+        )
+        point_px = point_mm * self.canvas.pixels_per_mm
+        press_event = QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            point_px,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        release_event = QMouseEvent(
+            QEvent.Type.MouseButtonRelease,
+            point_px,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+
+        self.canvas.mousePressEvent(press_event)
+        self.assertEqual(self.canvas._selected_note_ids, {note_id})
+        self.assertEqual(hands, ["left"])
+        self.canvas.mouseReleaseEvent(release_event)
+
+    def test_inserting_a_note_clears_the_previous_selection(self) -> None:
+        self._add_note(60, 256)
+        self.canvas._selected_note_ids = {self.stave.events[0].id}
+        point_px = self._point(64, 512) * self.canvas.pixels_per_mm
+        press_event = QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            point_px,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        release_event = QMouseEvent(
+            QEvent.Type.MouseButtonRelease,
+            point_px,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+
+        self.canvas.mousePressEvent(press_event)
+
+        self.assertEqual(self.canvas._selected_note_ids, set())
+        self.canvas.mouseReleaseEvent(release_event)
+        self.assertEqual([(note.time, note.pitch) for note in self.stave.events], [(256, 60), (512, 64)])
+
     def test_middle_mouse_button_starts_and_stops_panning(self) -> None:
         paper_view = PaperView()
         paper_view.setWidget(self.canvas)

@@ -72,7 +72,7 @@ class NoteTool(BaseTool):
         if existing is not None:
             existing_system, existing_stave, note, geometry, part = existing
             system, stave = existing_system, existing_stave
-            self.hand = note.hand
+            self.canvas.select_note_hand(note.hand)
             deferred_preview = part == "head" and note.continuation_id is None
             source_left_mm = self.canvas.stave_left_mm(system, stave) if deferred_preview else None
             event_index = stave.events.index(note) if deferred_preview else None

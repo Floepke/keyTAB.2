@@ -7,7 +7,7 @@ import sys
 
 from PySide6.QtCore import QEvent, QPointF, QSize, Qt
 from PySide6.QtGui import QAction, QActionGroup, QCursor, QKeySequence
-from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox, QScrollArea, QToolBar, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox, QScrollArea, QSizePolicy, QToolBar, QVBoxLayout, QWidget
 
 from file_manager import FileManager
 from icons import get_qicon
@@ -15,6 +15,7 @@ from ui.dialogs.info_dialog import InfoDialog
 from ui.dialogs.style_dialog import StyleDialog
 from ui.ctlz import CtlZ
 from ui.paper_canvas import PaperCanvas
+from ui.fluidsynth_player import FluidSynthPlayer
 from ui.theme import THEMES, apply_theme
 from ui.widgets.snap_selector import SnapSizeDock
 
@@ -171,6 +172,7 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
         self.showMaximized()
         self.paper_canvas = PaperCanvas(self.document)
+        self._player = FluidSynthPlayer(self)
         self.paper_canvas.set_document_change_callback(self._record_document_change)
         self.paper_canvas.set_history_callbacks(self.undo, self.redo)
         self.paper_view = PaperView()
@@ -273,6 +275,7 @@ class MainWindow(QMainWindow):
         self.left_note_input_action = QAction(get_qicon("note_left", (28, 28)), "", self)
         self.left_note_input_action.setObjectName("leftNoteInputAction")
         self.left_note_input_action.setToolTip("Left Note Input")
+        self.left_note_input_action.setShortcut(",")
         self.left_note_input_action.setCheckable(True)
         self.left_note_input_action.setChecked(True)
         self.left_note_input_action.triggered.connect(lambda: self.paper_canvas.select_note_hand("left"))
@@ -281,6 +284,7 @@ class MainWindow(QMainWindow):
         self.right_note_input_action = QAction(get_qicon("note_right", (28, 28)), "", self)
         self.right_note_input_action.setObjectName("rightNoteInputAction")
         self.right_note_input_action.setToolTip("Right Note Input")
+        self.right_note_input_action.setShortcut(".")
         self.right_note_input_action.setCheckable(True)
         self.right_note_input_action.triggered.connect(lambda: self.paper_canvas.select_note_hand("right"))
         toolbar.addAction(self.right_note_input_action)
@@ -307,6 +311,7 @@ class MainWindow(QMainWindow):
         note_hand_group.addAction(self.time_signature_action)
         self._note_hand_group = note_hand_group
         self._note_hand_group.triggered.connect(lambda _action: self._refresh_toolbar_icons())
+        self.paper_canvas.note_hand_changed.connect(self._sync_note_input_toolbar)
         toolbar.addSeparator()
 
         self.previous_page_action = QAction(get_qicon("previous", (28, 28)), "", self)
@@ -317,6 +322,23 @@ class MainWindow(QMainWindow):
         self.next_page_action.setToolTip("Next page")
         self.next_page_action.triggered.connect(lambda: self._change_page(1))
         toolbar.addAction(self.next_page_action)
+
+        spacer = QWidget(toolbar)
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar.addWidget(spacer)
+
+        self.play_action = QAction(get_qicon("play", (28, 28)), "", self)
+        self.play_action.setToolTip("Play score")
+        self.play_action.triggered.connect(self._play_score)
+        toolbar.addAction(self.play_action)
+        self.stop_action = QAction(get_qicon("stop", (28, 28)), "", self)
+        self.stop_action.setToolTip("Stop playback")
+        self.stop_action.setEnabled(False)
+        self.stop_action.triggered.connect(self._player.stop)
+        toolbar.addAction(self.stop_action)
+        self._player.playback_started.connect(self._set_playback_actions)
+        self._player.playback_finished.connect(self._set_playback_actions)
+        self._player.playback_failed.connect(self._show_playback_error)
 
         self.addToolBar(toolbar)
 
@@ -489,9 +511,28 @@ class MainWindow(QMainWindow):
             (self.time_signature_action, "time_signature"),
             (self.previous_page_action, "previous"),
             (self.next_page_action, "next"),
+            (self.play_action, "play"),
+            (self.stop_action, "stop"),
         ):
             tint = colors["highlight"] if action.isCheckable() and action.isChecked() else colors["text"]
             action.setIcon(get_qicon(icon_name, (28, 28), tint))
+
+    def _play_score(self) -> None:
+        self._player.play(self.document)
+
+    def _set_playback_actions(self) -> None:
+        playing = self._player.is_playing
+        self.play_action.setEnabled(not playing)
+        self.stop_action.setEnabled(playing)
+
+    def _show_playback_error(self, message: str) -> None:
+        self._set_playback_actions()
+        QMessageBox.warning(self, "Playback unavailable", message)
+
+    def _sync_note_input_toolbar(self, hand: str) -> None:
+        action = self.left_note_input_action if hand == "left" else self.right_note_input_action
+        action.setChecked(True)
+        self._refresh_toolbar_icons()
 
     def _show_about(self) -> None:
         QMessageBox.about(
@@ -517,11 +558,13 @@ class MainWindow(QMainWindow):
         )
         if choice == QMessageBox.StandardButton.Yes:
             if self.file_manager.save():
+                self._player.shutdown()
                 event.accept()
             else:
                 event.ignore()
             return
         if choice == QMessageBox.StandardButton.No:
+            self._player.shutdown()
             event.accept()
             return
         event.ignore()

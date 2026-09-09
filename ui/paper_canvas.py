@@ -11,7 +11,7 @@ import math
 from pathlib import Path
 from uuid import uuid4
 
-from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt
+from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QCursor, QImage, QKeySequence, QPainter, QPalette, QPen, QPolygonF
 from PySide6.QtWidgets import QInputDialog, QMenu, QWidget
 
@@ -35,6 +35,8 @@ from utils.operator import Operator
 
 class PaperCanvas(QWidget):
     """Draw the current document's paper pages using cached Cairo images."""
+
+    note_hand_changed = Signal(str)
 
     BASE_PIXELS_PER_MM = 3.0
     MIN_ZOOM = 0.25
@@ -501,9 +503,10 @@ class PaperCanvas(QWidget):
                     show_continuation_dots=self._document.layout.note_continuation_dot_visible,
                 )
             stem_width_mm = self._document.layout.engraving_mm(self._document.layout.note_stem_thickness_mm, stave.scale)
+            beam_corner_radius_mm = self._document.layout.engraving_mm(self._document.layout.beam_corner_radius_mm, stave.scale)
             if self._document.layout.beam_visible:
                 for beam in render_data.beams_in_tick_range(visible_start_tick, visible_end_tick):
-                    beam_drawer.draw(beam, stem_width_mm)
+                    beam_drawer.draw(beam, stem_width_mm, beam_corner_radius_mm)
             if include_editor_controls:
                 self._draw_stave_control(stave_drawer, system, stave, left_mm)
 
@@ -860,6 +863,11 @@ class PaperCanvas(QWidget):
                 self._show_stave_menu(event.globalPosition().toPoint())
                 event.accept()
                 return
+            note = self.note_at(self._point_mm(event.position()))
+            selected_note_ids = {note[2].id} if note is not None else set()
+            if selected_note_ids != self._selected_note_ids:
+                self._selected_note_ids = selected_note_ids
+                self.update()
             active_tool = self._tool_manager.active_tool
             self._left_tool_active = bool(active_tool and active_tool.on_left_press(self._point_mm(event.position())))
             if self._left_tool_active:
@@ -1254,6 +1262,7 @@ class PaperCanvas(QWidget):
         if not isinstance(note_tool, NoteTool):
             raise RuntimeError("Registered note tool has an unexpected type")
         note_tool.set_hand(hand)
+        self.note_hand_changed.emit(hand)
         self.update()
 
     def select_system_break_mode(self) -> None:
