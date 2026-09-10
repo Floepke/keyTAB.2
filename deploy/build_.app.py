@@ -21,6 +21,7 @@ APP_NAME = "keyTAB2"
 BUNDLE_IDENTIFIER = "org.philipbergwerf.keytab2"
 APP_CATEGORY = "public.app-category.music"
 DOCUMENT_UTI = "org.philipbergwerf.keytab2.score"
+DEFAULT_SOUNDFONT = Path.home() / ".keyTAB2" / "soundfonts" / "FluidR3_GM.sf2"
 UNUSED_QT_MODULES = (
     "Qt3DAnimation",
     "Qt3DCore",
@@ -158,6 +159,17 @@ def copy_qt_licenses(app_path: Path) -> None:
                 shutil.copy2(license_file, target)
 
 
+def bundle_soundfont(app_path: Path, soundfont: Path = DEFAULT_SOUNDFONT) -> None:
+    if not soundfont.is_file():
+        raise RuntimeError(
+            f"GM soundfont not found: {soundfont}. "
+            "Install FluidR3_GM.sf2 at this path before building."
+        )
+    target = app_path / "Contents" / "Resources" / "soundfonts" / "FluidR3_GM.sf2"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(soundfont, target)
+
+
 def update_info_plist(app_path: Path, version: str) -> None:
     plist_path = app_path / "Contents" / "Info.plist"
     with plist_path.open("rb") as stream:
@@ -273,6 +285,7 @@ def main() -> int:
             raise RuntimeError("PyInstaller did not create the expected application bundle.")
         copy_qt_licenses(app_path)
         shutil.copy2(project_root / "LICENSE", app_path / "Contents" / "Resources" / "LICENSE")
+        bundle_soundfont(app_path)
         update_info_plist(app_path, version)
 
         final_app = output_dir / f"{APP_NAME}.app"
@@ -285,6 +298,8 @@ def main() -> int:
             final_dmg.unlink(missing_ok=True)
             shutil.move(str(dmg), final_dmg)
             print(f"Installer DMG created: {final_dmg}")
+            shutil.rmtree(final_app)
+            print(f"Removed standalone application bundle: {final_app}")
     except (OSError, RuntimeError, subprocess.CalledProcessError) as error:
         print(f"Build failed; retained artifacts at {build_dir}: {error}", file=sys.stderr)
         return 1

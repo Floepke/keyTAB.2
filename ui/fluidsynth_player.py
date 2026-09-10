@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import os
+import sys
 from pathlib import Path
 from threading import Event, Lock, Thread, current_thread
 from time import monotonic, sleep
@@ -105,10 +106,12 @@ class FluidSynthPlayer(QObject):
     def _ensure_synth(self) -> None:
         if self._synth is not None:
             return
-        library = ctypes.util.find_library("fluidsynth")
+        library = self._library_path()
         if not library:
-            raise RuntimeError("FluidSynth is not installed. Install libfluidsynth and a GM soundfont.")
+            raise RuntimeError("FluidSynth is not installed. On macOS, run: brew install fluid-synth")
         ctypes.CDLL(library)
+        if sys.platform == "darwin" and library.startswith("/opt/homebrew/"):
+            os.environ.setdefault("HOMEBREW_PREFIX", "/opt/homebrew")
         try:
             import fluidsynth
         except ImportError as error:
@@ -116,7 +119,7 @@ class FluidSynthPlayer(QObject):
         soundfont = self._soundfont_path()
         synth = fluidsynth.Synth()
         try:
-            synth.start(driver="pulseaudio")
+            synth.start(driver="coreaudio" if sys.platform == "darwin" else "pulseaudio")
         except Exception:
             synth.start()
         soundfont_id = synth.sfload(str(soundfont))
@@ -127,16 +130,37 @@ class FluidSynthPlayer(QObject):
         self._synth = synth
 
     @staticmethod
+    def _library_path() -> str | None:
+        library = ctypes.util.find_library("fluidsynth")
+        if library:
+            return library
+        if sys.platform == "darwin":
+            for path in (
+                "/opt/homebrew/opt/fluid-synth/lib/libfluidsynth.dylib",
+                "/usr/local/opt/fluid-synth/lib/libfluidsynth.dylib",
+            ):
+                if Path(path).is_file():
+                    return path
+        return None
+
+    @staticmethod
     def _soundfont_path() -> Path:
         configured = os.environ.get("KEYTAB_SOUNDFONT")
+        bundled = None
+        if getattr(sys, "frozen", False):
+            bundled = Path(sys.executable).resolve().parent.parent / "Resources" / "soundfonts" / "FluidR3_GM.sf2"
         candidates = [
             Path(configured).expanduser() if configured else None,
+            bundled,
+            Path.home() / ".keyTAB2" / "soundfonts" / "FluidR3_GM.sf2",
+            Path("/opt/homebrew/opt/fluid-synth/share/fluid-synth/sf2/VintageDreamsWaves-v2.sf2"),
+            Path("/usr/local/opt/fluid-synth/share/fluid-synth/sf2/VintageDreamsWaves-v2.sf2"),
             Path("/usr/share/sounds/sf2/FluidR3_GM.sf2"),
             Path("/usr/share/sounds/sf2/TimGM6mb.sf2"),
         ]
         soundfont = next((candidate for candidate in candidates if candidate is not None and candidate.is_file()), None)
         if soundfont is None:
-            raise RuntimeError("No GM soundfont found. Install fluid-soundfont-gm or set KEYTAB_SOUNDFONT to an .sf2 file.")
+            raise RuntimeError("No soundfont found. Set KEYTAB_SOUNDFONT to an .sf2 file.")
         return soundfont
 
     def _run(self, events: list[tuple[float, str, int, int]]) -> None:
