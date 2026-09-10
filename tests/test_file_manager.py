@@ -4,13 +4,45 @@ import tempfile
 import struct
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, call, patch
 
 from file_manager import FileManager
-from keytab2_model import NoteEvent, TempoEvent, TextEvent
+from keytab2_model import KeyTab2Document, NoteEvent, TempoEvent, TextEvent
 from midi_importer import load_midi
 
 
 class FileManagerTests(unittest.TestCase):
+    def test_clear_recent_paths_removes_persisted_paths(self) -> None:
+        app_data = Mock()
+
+        with patch("file_manager.get_appdata_manager", return_value=app_data):
+            FileManager().clear_recent_paths()
+
+        app_data.set.assert_called_once_with("recent_files", [])
+        app_data.save.assert_called_once_with()
+
+    def test_opened_documents_are_added_to_recent_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            first_path = Path(directory) / "first.keytab2"
+            second_path = Path(directory) / "second.keytab2"
+            KeyTab2Document.new().save(first_path)
+            KeyTab2Document.new().save(second_path)
+            app_data = Mock()
+            app_data.get.return_value = [str(first_path), str(second_path)]
+
+            with patch("file_manager.get_appdata_manager", return_value=app_data):
+                manager = FileManager()
+                self.assertTrue(manager.open_path(second_path))
+                app_data.get.return_value = [str(second_path), str(first_path)]
+                self.assertEqual(manager.recent_paths(), (second_path, first_path))
+
+        app_data.set.assert_has_calls([
+            call("last_file_dialog_dir", str(second_path.parent)),
+            call("last_opened_file", str(second_path)),
+            call("recent_files", [str(second_path), str(first_path)]),
+        ])
+        app_data.save.assert_called_once_with()
+
     def test_midi_import_uses_default_stave_range_and_six_measure_systems(self) -> None:
         track = b"\x00\xff\x58\x04\x04\x02\x18\x08" + b"\x00\x90\x3c\x40" + b"\xe9\x00\x80\x3c\x00" + b"\x00\xff\x2f\x00"
         midi = b"MThd" + struct.pack(">IHHH", 6, 0, 1, 480) + b"MTrk" + struct.pack(">I", len(track)) + track

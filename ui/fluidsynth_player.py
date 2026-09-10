@@ -36,6 +36,15 @@ class FluidSynthPlayer(QObject):
         with self._lock:
             return self._playing
 
+    def initialize(self) -> bool:
+        """Open the audio driver without producing an audible note."""
+        try:
+            self._ensure_synth()
+        except (ImportError, OSError, RuntimeError):
+            return False
+        self._all_notes_off()
+        return True
+
     def play(self, document: KeyTab2Document) -> bool:
         self.stop()
         events = self._scheduled_events(document)

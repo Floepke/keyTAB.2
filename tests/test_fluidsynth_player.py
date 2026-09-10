@@ -1,12 +1,30 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import Mock
 
 from keytab2_model import KeyTab2Document, NoteEvent, TempoEvent
 from ui.fluidsynth_player import FluidSynthPlayer
 
 
 class FluidSynthPlayerTests(unittest.TestCase):
+    def test_initialize_opens_the_synth_without_starting_playback(self) -> None:
+        player = FluidSynthPlayer()
+        synth = Mock()
+        player._ensure_synth = Mock()
+        player._synth = synth
+
+        self.assertTrue(player.initialize())
+        player._ensure_synth.assert_called_once_with()
+        synth.all_notes_off.assert_called_once_with(0)
+        self.assertFalse(player.is_playing)
+
+    def test_initialize_returns_false_when_the_synth_is_unavailable(self) -> None:
+        player = FluidSynthPlayer()
+        player._ensure_synth = Mock(side_effect=RuntimeError("unavailable"))
+
+        self.assertFalse(player.initialize())
+
     def test_audition_does_not_interrupt_full_score_playback(self) -> None:
         player = FluidSynthPlayer()
         player._playing = True

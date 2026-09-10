@@ -17,6 +17,7 @@ class FileManager:
     EXTENSION = ".keytab2"
     FILE_FILTER = "keyTAB2 Score (*.keytab2)"
     MIDI_FILE_FILTER = "MIDI files (*.mid *.midi)"
+    RECENT_FILES_LIMIT = 20
 
     def __init__(self, parent: QWidget | None = None) -> None:
         self.parent = parent
@@ -67,7 +68,7 @@ class FileManager:
             return False
         self.path = target
         self._last_directory = target.parent
-        self._remember_path(target)
+        self._remember_path(target, recent=True)
         return True
 
     def save(self) -> bool:
@@ -114,10 +115,29 @@ class FileManager:
             target = target.with_suffix(self.EXTENSION)
         return target
 
-    def _remember_path(self, path: Path) -> None:
+    def recent_paths(self) -> tuple[Path, ...]:
+        """Return persisted document paths in most-recent-first order."""
+        recent_files = get_appdata_manager().get("recent_files", [])
+        if not isinstance(recent_files, list):
+            return ()
+        return tuple(Path(str(path)).expanduser() for path in recent_files if str(path).strip())
+
+    def clear_recent_paths(self) -> None:
+        """Remove all persisted recent document paths."""
+        app_data = get_appdata_manager()
+        app_data.set("recent_files", [])
+        app_data.save()
+
+    def _remember_path(self, path: Path, *, recent: bool = False) -> None:
         app_data = get_appdata_manager()
         app_data.set("last_file_dialog_dir", str(path.parent))
         app_data.set("last_opened_file", str(path))
+        if recent:
+            recent_files = app_data.get("recent_files", [])
+            if not isinstance(recent_files, list):
+                recent_files = []
+            paths = [str(candidate) for candidate in recent_files if str(candidate).strip() and str(candidate) != str(path)]
+            app_data.set("recent_files", [str(path), *paths][:self.RECENT_FILES_LIMIT])
         app_data.save()
 
     def _show_error(self, title: str, message: str) -> None:

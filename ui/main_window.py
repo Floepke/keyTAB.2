@@ -7,7 +7,7 @@ import sys
 
 from PySide6.QtCore import QEvent, QPointF, QSize, Qt
 from PySide6.QtGui import QAction, QActionGroup, QCursor, QKeySequence
-from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox, QScrollArea, QSizePolicy, QToolBar, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMenu, QMessageBox, QScrollArea, QSizePolicy, QToolBar, QVBoxLayout, QWidget
 
 from appdata_manager import get_theme, set_theme
 from file_manager import FileManager
@@ -174,6 +174,7 @@ class MainWindow(QMainWindow):
         self.showMaximized()
         self.paper_canvas = PaperCanvas(self.document)
         self._player = FluidSynthPlayer(self)
+        self._player.initialize()
         self.paper_canvas.note_audition_requested.connect(self._player.audition)
         self.paper_canvas.set_document_change_callback(self._record_document_change)
         self.paper_canvas.set_history_callbacks(self.undo, self.redo)
@@ -207,6 +208,8 @@ class MainWindow(QMainWindow):
         self.open_action = file_menu.addAction("&Open...")
         self.open_action.setShortcut("Ctrl+O")
         self.open_action.triggered.connect(self.open_document)
+        self.recent_files_menu = file_menu.addMenu("Recent Files")
+        self.recent_files_menu.aboutToShow.connect(self._refresh_recent_files_menu)
         self.save_action = file_menu.addAction("&Save")
         self.save_action.setShortcut("Ctrl+S")
         self.save_action.triggered.connect(self.save_document)
@@ -407,12 +410,41 @@ class MainWindow(QMainWindow):
         if not self._confirm_document_replacement("opening another score"):
             return
         if self.file_manager.load():
-            self.document = self.file_manager.document
-            self.paper_canvas.set_document(self.document)
-            self.snap_band_action.setChecked(self.document.layout.grid_band_visible)
-            self._reset_undo_history()
-            self.statusBar().showMessage("Document opened", 3000)
-            self._update_title()
+            self._finish_document_open()
+
+    def _refresh_recent_files_menu(self) -> None:
+        self.recent_files_menu.clear()
+        paths = self.file_manager.recent_paths()
+        if not paths:
+            empty_action = self.recent_files_menu.addAction("No Recent Files")
+            empty_action.setEnabled(False)
+            return
+        for path in paths:
+            action = self.recent_files_menu.addAction(path.name)
+            action.setToolTip(str(path))
+            action.setEnabled(path.is_file())
+            action.triggered.connect(lambda _checked=False, recent_path=path: self.open_recent_document(recent_path))
+        self.recent_files_menu.addSeparator()
+        clear_action = self.recent_files_menu.addAction("Clear Recent Files")
+        clear_action.triggered.connect(self._clear_recent_files)
+
+    def _clear_recent_files(self) -> None:
+        self.file_manager.clear_recent_paths()
+        self.statusBar().showMessage("Recent files cleared", 3000)
+
+    def open_recent_document(self, path) -> None:
+        if not path.is_file() or not self._confirm_document_replacement("opening another score"):
+            return
+        if self.file_manager.open_path(path):
+            self._finish_document_open()
+
+    def _finish_document_open(self) -> None:
+        self.document = self.file_manager.document
+        self.paper_canvas.set_document(self.document)
+        self.snap_band_action.setChecked(self.document.layout.grid_band_visible)
+        self._reset_undo_history()
+        self.statusBar().showMessage("Document opened", 3000)
+        self._update_title()
 
     def save_document(self) -> None:
         if self.file_manager.save():
@@ -529,6 +561,8 @@ class MainWindow(QMainWindow):
             (self.right_note_input_action, "note_right"),
             (self.system_break_action, "line_break"),
             (self.time_signature_action, "time_signature"),
+            (self.left_slur_action, "mirror:slur"),
+            (self.right_slur_action, "slur"),
             (self.previous_page_action, "previous"),
             (self.next_page_action, "next"),
             (self.play_action, "play"),
