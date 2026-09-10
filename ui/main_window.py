@@ -13,12 +13,14 @@ from appdata_manager import get_theme, set_theme
 from file_manager import FileManager
 from icons import get_qicon
 from ui.dialogs.info_dialog import InfoDialog
+from ui.dialogs.preferences_dialog import PreferencesDialog
 from ui.dialogs.style_dialog import StyleDialog
 from ui.ctlz import CtlZ
 from ui.paper_canvas import PaperCanvas
 from ui.fluidsynth_player import FluidSynthPlayer
 from ui.theme import THEMES, apply_theme
 from ui.widgets.snap_selector import SnapSizeDock
+from settings_manager import get_preferences_manager
 
 
 class PaperContainer(QWidget):
@@ -82,6 +84,7 @@ class PaperView(QScrollArea):
             if self._middle_button_panning:
                 self._pan_from_mouse_move(event)
                 return True
+            self.setFocus(Qt.FocusReason.MouseFocusReason)
         elif watched is self._paper_canvas and event.type() == QEvent.Type.MouseButtonRelease:
             if event.button() == Qt.MouseButton.MiddleButton:
                 self._middle_button_panning = False
@@ -96,6 +99,9 @@ class PaperView(QScrollArea):
         if event.key() == Qt.Key.Key_Escape:
             self.window().close()
             event.accept()
+            return
+        if self._paper_canvas is not None:
+            self._paper_canvas.keyPressEvent(event)
             return
         super().keyPressEvent(event)
 
@@ -167,6 +173,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.file_manager = FileManager(self)
+        restored_source = self.file_manager.restore_startup_document()
         self.document = self.file_manager.document
         self._ctlz = CtlZ(self.document, max_steps=64)
 
@@ -186,7 +193,9 @@ class MainWindow(QMainWindow):
         self._create_toolbar()
         self._create_snap_dock()
         self._set_theme(get_theme(), persist=False)
-        self.statusBar().showMessage("New score")
+        self.statusBar().showMessage(
+            "Last document restored" if restored_source == "last_opened" else "Recovery session restored" if restored_source == "session" else "New score"
+        )
         self._update_title()
 
     def _create_menus(self) -> None:
@@ -226,6 +235,8 @@ class MainWindow(QMainWindow):
         score_info_action.triggered.connect(self.edit_score_info)
         style_action = edit_menu.addAction("&Style...")
         style_action.triggered.connect(self.edit_style)
+        preferences_action = edit_menu.addAction("&Preferences...")
+        preferences_action.triggered.connect(self.edit_preferences)
         edit_menu.addSeparator()
         cut_action = edit_menu.addAction("Cu&t")
         cut_action.setShortcut(QKeySequence.StandardKey.Cut)
@@ -490,6 +501,14 @@ class MainWindow(QMainWindow):
         self.snap_band_action.setChecked(self.document.layout.grid_band_visible)
         self.statusBar().showMessage("Style updated", 3000)
 
+    def edit_preferences(self) -> None:
+        preferences = get_preferences_manager()
+        dialog = PreferencesDialog(bool(preferences.get("save_on_exit", False)), self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        preferences.set("save_on_exit", dialog.save_on_exit_enabled())
+        preferences.save()
+
     def _change_page(self, offset: int) -> None:
         self.paper_canvas.set_page_index((self.paper_canvas.page_index + offset) % self.paper_canvas.page_count)
         self.statusBar().showMessage(
@@ -603,6 +622,14 @@ class MainWindow(QMainWindow):
         super().keyPressEvent(event)
 
     def closeEvent(self, event) -> None:
+        if self.file_manager.path is not None and bool(get_preferences_manager().get("save_on_exit", False)):
+            if not self.file_manager.save():
+                event.ignore()
+                return
+            self.file_manager.save_session()
+            self._player.shutdown()
+            event.accept()
+            return
         choice = QMessageBox.warning(
             self,
             "Close keyTAB 2",
@@ -612,12 +639,14 @@ class MainWindow(QMainWindow):
         )
         if choice == QMessageBox.StandardButton.Yes:
             if self.file_manager.save():
+                self.file_manager.save_session()
                 self._player.shutdown()
                 event.accept()
             else:
                 event.ignore()
             return
         if choice == QMessageBox.StandardButton.No:
+            self.file_manager.save_session()
             self._player.shutdown()
             event.accept()
             return

@@ -212,6 +212,43 @@ class KeyTab2DocumentTests(unittest.TestCase):
         self.assertEqual(document.pages[1].width_mm, page.width_mm)
         self.assertEqual(document.pages[1].height_mm, page.height_mm)
 
+    def test_split_repackages_later_pages_compactly(self) -> None:
+        document = KeyTab2Document.new()
+        document.layout.page_width_mm = 120.0
+        document.pages[0].width_mm = 120.0
+        document._system_required_width_mm = lambda _system: 50.0
+        for split_tick in (1024, 2048, 3072, 4096, 5120):
+            system = next(
+                system
+                for page in document.pages
+                for system in page.systems
+                if system.start_tick < split_tick < system.end_tick
+            )
+            document.split_system_at(document.pages[0].id, system.id, split_tick)
+
+        self.assertEqual([len(page.systems) for page in document.pages], [2, 2, 2])
+
+        first_system = document.pages[0].systems[0]
+        document.split_system_at(document.pages[0].id, first_system.id, 512)
+
+        self.assertEqual([len(page.systems) for page in document.pages], [2, 2, 2, 1])
+
+    def test_forced_page_break_starts_a_new_page_and_round_trips(self) -> None:
+        document = KeyTab2Document.new()
+        first_system = document.pages[0].systems[0]
+        following = document.split_system_at(document.pages[0].id, first_system.id, 1024)
+
+        document.set_forced_page_break_before(following.id, True)
+
+        self.assertEqual([len(page.systems) for page in document.pages], [1, 1])
+        self.assertTrue(document.pages[1].systems[0].force_page_break_before)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "page-break.keytab2"
+            document.save(path)
+            restored = KeyTab2Document.load(path)
+        self.assertTrue(restored.pages[1].systems[0].force_page_break_before)
+        self.assertEqual([len(page.systems) for page in restored.pages], [1, 1])
+
     def test_repaginate_document_reclaims_pages_after_a_stave_scale_reduces(self) -> None:
         document = KeyTab2Document.new()
         document.layout.page_width_mm = 170.0

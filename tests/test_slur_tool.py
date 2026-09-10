@@ -130,7 +130,7 @@ class SlurToolTests(unittest.TestCase):
         self.assertIsInstance(pasted, SlurEvent)
         self.assertEqual(
             (pasted.x1_rpitch, pasted.y1_tick, pasted.x2_rpitch, pasted.y2_tick, pasted.x3_rpitch, pasted.y3_tick, pasted.x4_rpitch, pasted.y4_tick),
-            (6, 640, 2, 704, 11, 832, 13, 896),
+            (0, 640, -4, 704, 5, 832, 7, 896),
         )
 
 

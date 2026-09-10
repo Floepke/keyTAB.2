@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QKeyEvent
     from ui.paper_canvas import PaperCanvas
 
 
@@ -37,4 +38,7 @@ class BaseTool:
         return False
 
     def on_right_click(self, position_mm: QPointF) -> bool:
+        return False
+
+    def on_key_press(self, event: QKeyEvent) -> bool:
         return False

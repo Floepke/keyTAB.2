@@ -642,19 +642,19 @@ class PaperCanvas(QWidget):
         self._draw_selection_overlay(painter, exposed_rect)
         if self._tool_manager.active_tool is self._system_break_tool:
             highlight = self._system_break_highlight_geometry()
-            if highlight is None:
-                return
-            left_mm, right_mm, y_mm = highlight
-            painter.save()
-            painter.setOpacity(0.7)
-            painter.setPen(QPen(QColor("#1769aa"), max(2, round(self.pixels_per_mm))))
-            painter.drawLine(
-                round(left_mm * self.pixels_per_mm),
-                round(y_mm * self.pixels_per_mm),
-                round(right_mm * self.pixels_per_mm),
-                round(y_mm * self.pixels_per_mm),
-            )
-            painter.restore()
+            if highlight is not None:
+                left_mm, right_mm, y_mm = highlight
+                painter.save()
+                painter.setOpacity(0.7)
+                painter.setPen(QPen(QColor("#1769aa"), max(2, round(self.pixels_per_mm))))
+                painter.drawLine(
+                    round(left_mm * self.pixels_per_mm),
+                    round(y_mm * self.pixels_per_mm),
+                    round(right_mm * self.pixels_per_mm),
+                    round(y_mm * self.pixels_per_mm),
+                )
+                painter.restore()
+            self._draw_forced_page_break_guides(painter)
             return
         if self._tool_manager.active_tool is self._time_signature_tool:
             self._draw_time_signature_overlay(painter, exposed_rect)
@@ -1028,6 +1028,10 @@ class PaperCanvas(QWidget):
                 window.close()
                 event.accept()
                 return
+        active_tool = self._tool_manager.active_tool
+        if active_tool is not None and active_tool.on_key_press(event):
+            event.accept()
+            return
         if event.key() == Qt.Key.Key_Z and event.modifiers() == (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier):
             if self._redo_callback is not None:
                 self._redo_callback()
@@ -1169,33 +1173,25 @@ class PaperCanvas(QWidget):
         return changed
 
     def paste_selection(self) -> bool:
-        if (not self._clipboard_notes and not self._clipboard_slurs) or self._mouse_stave_target is None or self.mouse_time is None or self.mouse_pitch is None:
+        if (not self._clipboard_notes and not self._clipboard_slurs) or self._mouse_stave_target is None or self.mouse_time is None:
             return False
         system, stave, _ = self._mouse_stave_target
         source_time = min(
             *(note.time for note in self._clipboard_notes),
             *(tick for slur in self._clipboard_slurs for tick in (slur.y1_tick, slur.y2_tick, slur.y3_tick, slur.y4_tick)),
         )
-        source_pitch = min(
-            *(note.pitch for note in self._clipboard_notes),
-            *(60 + rpitch for slur in self._clipboard_slurs for rpitch in (slur.x1_rpitch, slur.x2_rpitch, slur.x3_rpitch, slur.x4_rpitch)),
-        )
         pasted = [deepcopy(note) for note in self._clipboard_notes]
         pasted_slurs = [deepcopy(slur) for slur in self._clipboard_slurs]
         for note in pasted:
             note.id = str(uuid4())
             note.time += self.mouse_time - source_time
-            note.pitch += self.mouse_pitch - source_pitch
             if note.time < system.start_tick or note.time + note.duration > system.end_tick or not NoteTool._can_place(stave, note):
                 return False
         for slur in pasted_slurs:
             slur.id = str(uuid4())
             tick_offset = int(self.mouse_time - source_time)
-            pitch_offset = self.mouse_pitch - source_pitch
             for attribute in ("y1_tick", "y2_tick", "y3_tick", "y4_tick"):
                 setattr(slur, attribute, getattr(slur, attribute) + tick_offset)
-            for attribute in ("x1_rpitch", "x2_rpitch", "x3_rpitch", "x4_rpitch"):
-                setattr(slur, attribute, getattr(slur, attribute) + pitch_offset)
             self._slur_tool._constrain_to_page(slur, system, stave, self.stave_left_mm(system, stave))
         stave.events.extend((*pasted, *pasted_slurs))
         stave.touch()
@@ -1395,6 +1391,46 @@ class PaperCanvas(QWidget):
         left_mm, right_mm = self._system_column_bounds(page, system)
         tick = value if isinstance(value, int) else (system.start_tick if value == "top" else system.end_tick)
         return left_mm, right_mm, self._time_to_y_mm(system, tick)
+
+    def hovered_system_break_target(self):
+        if self._last_mouse_position_mm is None:
+            return None
+        return self.system_break_target_at(self._last_mouse_position_mm)
+
+    def following_system(self, system):
+        systems = [candidate for page in self._document.pages for candidate in page.systems]
+        index = systems.index(system)
+        return systems[index + 1] if index + 1 < len(systems) else None
+
+    def show_system_page(self, system) -> None:
+        """Show the page containing a system after repagination."""
+        page_index = next(
+            (index for index, page in enumerate(self._document.pages) if system in page.systems),
+            None,
+        )
+        if page_index is not None:
+            self.set_page_index(page_index)
+
+    def _draw_forced_page_break_guides(self, painter: QPainter) -> None:
+        page = self._current_page()
+        systems = [system for document_page in self._document.pages for system in document_page.systems]
+        painter.save()
+        painter.setOpacity(0.85)
+        pen = QPen(QColor("#d97706"), max(2, round(self.pixels_per_mm * 0.6)))
+        pen.setStyle(Qt.PenStyle.DashLine)
+        painter.setPen(pen)
+        for system in page.systems:
+            if not system.force_page_break_before or systems.index(system) == 0:
+                continue
+            left_mm, right_mm = self._system_column_bounds(page, system)
+            y_mm = system.top_mm - 3.0
+            painter.drawLine(
+                round(left_mm * self.pixels_per_mm),
+                round(y_mm * self.pixels_per_mm),
+                round(right_mm * self.pixels_per_mm),
+                round(y_mm * self.pixels_per_mm),
+            )
+        painter.restore()
 
     def finish_system_break_edit(self) -> None:
         self.invalidate_render_cache()

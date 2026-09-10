@@ -23,6 +23,7 @@ def get_preferences_manager() -> PreferencesManager:
     if _preferences_manager is None:
         manager = PreferencesManager(PREFERENCES_PATH)
         manager.register("timestamp_format", "%d-%m-%Y_%H:%M:%S")
+        manager.register("save_on_exit", False)
         manager.load()
         _preferences_manager = manager
     return _preferences_manager

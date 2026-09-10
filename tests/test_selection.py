@@ -163,7 +163,7 @@ class SelectionTests(unittest.TestCase):
 
         self.assertEqual(self.canvas.zoom, PaperView.ZOOM_FACTOR)
 
-    def test_copy_cut_and_paste_preserve_relative_note_positions(self) -> None:
+    def test_copy_cut_and_paste_preserve_original_note_pitches(self) -> None:
         self._add_note(60, 256)
         self._add_note(64, 384)
         original_ids = {note.id for note in self.stave.events}
@@ -176,7 +176,7 @@ class SelectionTests(unittest.TestCase):
 
         self.assertTrue(self.canvas.paste_selection())
 
-        self.assertEqual([(note.time, note.pitch) for note in self.stave.events], [(512, 62), (640, 66)])
+        self.assertEqual([(note.time, note.pitch) for note in self.stave.events], [(512, 60), (640, 64)])
         self.assertTrue(original_ids.isdisjoint({note.id for note in self.stave.events}))
 
     def test_delete_selection_removes_notes_without_changing_clipboard(self) -> None:

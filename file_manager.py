@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QFileDialog, QMessageBox, QWidget
 from appdata_manager import get_appdata_manager
 from keytab2_model import KeyTab2Document
 from midi_importer import MidiImportError, load_midi
+from utils.CONSTANT import UTILS_SAVE_DIR
 
 
 class FileManager:
@@ -18,6 +19,7 @@ class FileManager:
     FILE_FILTER = "keyTAB2 Score (*.keytab2)"
     MIDI_FILE_FILTER = "MIDI files (*.mid *.midi)"
     RECENT_FILES_LIMIT = 20
+    SESSION_PATH = UTILS_SAVE_DIR / "session.keytab2"
 
     def __init__(self, parent: QWidget | None = None) -> None:
         self.parent = parent
@@ -69,6 +71,32 @@ class FileManager:
         self.path = target
         self._last_directory = target.parent
         self._remember_path(target, recent=True)
+        return True
+
+    def restore_startup_document(self) -> str | None:
+        """Restore the last opened document, or the session recovery backup."""
+        last_opened_file = get_appdata_manager().get("last_opened_file", "")
+        last_path = Path(str(last_opened_file)).expanduser() if last_opened_file else None
+        if last_path is not None and last_path.is_file() and self.open_path(last_path):
+            return "last_opened"
+        if not self.SESSION_PATH.is_file():
+            return None
+        try:
+            self.document = KeyTab2Document.load(self.SESSION_PATH)
+        except (OSError, ValueError):
+            return None
+        self.path = None
+        self._last_directory = self.SESSION_PATH.parent
+        return "session"
+
+    def save_session(self) -> bool:
+        """Write a recovery copy of the active document without changing its path."""
+        try:
+            self.SESSION_PATH.parent.mkdir(parents=True, exist_ok=True)
+            self.document.save(self.SESSION_PATH)
+        except (OSError, ValueError) as error:
+            self._show_error("Session backup failed", f"Could not save the recovery session.\n\n{error}")
+            return False
         return True
 
     def save(self) -> bool:

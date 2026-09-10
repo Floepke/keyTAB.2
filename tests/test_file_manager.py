@@ -12,6 +12,55 @@ from midi_importer import load_midi
 
 
 class FileManagerTests(unittest.TestCase):
+    def test_restores_last_opened_document_before_session_backup(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            last_path = Path(directory) / "last.keytab2"
+            session_path = Path(directory) / "session.keytab2"
+            last_document = KeyTab2Document.new()
+            last_document.score_info.title = "Last opened"
+            last_document.save(last_path)
+            session_document = KeyTab2Document.new()
+            session_document.score_info.title = "Session backup"
+            session_document.save(session_path)
+            app_data = Mock()
+            app_data.get.return_value = str(last_path)
+
+            with patch("file_manager.get_appdata_manager", return_value=app_data), patch.object(FileManager, "SESSION_PATH", session_path):
+                manager = FileManager()
+                self.assertEqual(manager.restore_startup_document(), "last_opened")
+
+        self.assertEqual(manager.document.score_info.title, "Last opened")
+
+    def test_restores_session_backup_when_last_opened_document_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            session_path = Path(directory) / "session.keytab2"
+            session_document = KeyTab2Document.new()
+            session_document.score_info.title = "Session backup"
+            session_document.save(session_path)
+            app_data = Mock()
+            app_data.get.return_value = str(Path(directory) / "missing.keytab2")
+
+            with patch("file_manager.get_appdata_manager", return_value=app_data), patch.object(FileManager, "SESSION_PATH", session_path):
+                manager = FileManager()
+                self.assertEqual(manager.restore_startup_document(), "session")
+
+        self.assertEqual(manager.document.score_info.title, "Session backup")
+        self.assertIsNone(manager.path)
+
+    def test_save_session_preserves_the_active_document_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            document_path = Path(directory) / "score.keytab2"
+            session_path = Path(directory) / "session.keytab2"
+            manager = FileManager()
+            manager.document.score_info.title = "Recovery title"
+            manager.path = document_path
+
+            with patch.object(FileManager, "SESSION_PATH", session_path):
+                self.assertTrue(manager.save_session())
+
+            self.assertTrue(session_path.is_file())
+            self.assertEqual(KeyTab2Document.load(session_path).score_info.title, "Recovery title")
+            self.assertEqual(manager.path, document_path)
     def test_clear_recent_paths_removes_persisted_paths(self) -> None:
         app_data = Mock()
 

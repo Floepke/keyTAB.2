@@ -88,7 +88,10 @@ UNUSED_QT_MODULES = (
     "QtXml",
     "QtXmlPatterns",
 )
-REQUIRED_QT_PLUGIN_DIRECTORIES = {"platforms"}
+REQUIRED_QT_PLUGIN_DIRECTORIES = {
+    "platforms",
+    "wayland-shell-integration",
+}
 REQUIRED_QT_PLATFORM_PLUGINS = {
     "libqwayland.so",
     "libqxcb.so",

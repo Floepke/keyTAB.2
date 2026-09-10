@@ -4,7 +4,8 @@ import unittest
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from PySide6.QtCore import QPoint, QPointF, QRect
+from PySide6.QtCore import QPoint, QPointF, QRect, Qt
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication
 
 from keytab2_model import BaseGrid, BeamEvent, KeyTab2Document, NoteEvent, SlurEvent, Stave
@@ -12,6 +13,7 @@ from ui.drawers.stave_drawer import StaveDrawer
 from ui.drawers.note_drawer import NoteDrawer
 from ui.drawers.base import DrawCommandBuffer, DrawerBase
 from ui.paper_canvas import PaperCanvas
+from ui.main_window import PaperView
 from ui.render_cache import build_stave_render_data
 
 
@@ -180,6 +182,25 @@ class RenderCacheTests(unittest.TestCase):
         self.assertEqual(len(data.beams.geometries), 1)
         self.assertEqual(len(data.beams.geometries[0].polygon_mm), 4)
         self.assertEqual(len(data.beams.geometries[0].segments_mm), 2)
+
+    def test_beam_extends_to_a_spanning_note_with_a_continuation_dot(self) -> None:
+        document = KeyTab2Document.new()
+        system = document.pages[0].systems[0]
+        stave = system.staves[0]
+        stave.events.extend([
+            NoteEvent(time=0, duration=512, pitch=60, hand="left"),
+            NoteEvent(time=256, duration=128, pitch=64, hand="left"),
+            NoteEvent(time=384, duration=128, pitch=67, hand="left"),
+            BeamEvent(time=256, duration=256, hand="left"),
+        ])
+
+        data = build_stave_render_data(system, stave, document.layout, 10.0, document.time_per_quarter * 4, document.base_grid)
+
+        spanning_note = next(note for note in data.notes.geometries if note.start_tick == 0)
+        beam = data.beams.geometries[0]
+        beam_start_x = (beam.polygon_mm[0][0] + beam.polygon_mm[3][0]) * 0.5
+        self.assertEqual(len(beam.segments_mm), 2)
+        self.assertAlmostEqual(beam_start_x, spanning_note.stem[2])
 
     def test_notes_beam_automatically_inside_a_base_grid_beat_group(self) -> None:
         document = KeyTab2Document.new()
@@ -540,6 +561,83 @@ class RenderCacheTests(unittest.TestCase):
         self.assertTrue(tool.on_left_press(QPointF((left_mm + right_mm) / 2.0, bottom_y_mm)))
         self.assertEqual(len(document.pages), 1)
         self.assertEqual(len(document.pages[0].systems), 1)
+
+    def test_system_break_tool_removes_a_break_by_right_clicking_its_boundary(self) -> None:
+        document = KeyTab2Document.new()
+        canvas = PaperCanvas(document)
+        leading = document.pages[0].systems[0]
+        following = document.split_system_at(document.pages[0].id, leading.id, 1024)
+        canvas.select_system_break_mode()
+        tool = canvas._tool_manager.active_tool
+        left_mm, right_mm = canvas._system_column_bounds(canvas.current_page, following)
+        boundary_mm = QPointF(
+            (left_mm + right_mm) / 2.0,
+            canvas._time_to_y_mm(following, following.start_tick),
+        )
+
+        self.assertTrue(tool.on_right_click(boundary_mm))
+        self.assertEqual([len(page.systems) for page in document.pages], [1])
+
+    def test_system_break_tool_toggles_page_break_from_hovered_boundary(self) -> None:
+        document = KeyTab2Document.new()
+        canvas = PaperCanvas(document)
+        leading = document.pages[0].systems[0]
+        following = document.split_system_at(document.pages[0].id, leading.id, 1024)
+        canvas.select_system_break_mode()
+        left_mm, right_mm = canvas._system_column_bounds(canvas.current_page, following)
+        canvas.update_mouse_cursor(
+            QPointF((left_mm + right_mm) / 2.0, canvas._time_to_y_mm(following, following.start_tick))
+        )
+
+        canvas.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier))
+
+        self.assertTrue(following.force_page_break_before)
+        self.assertEqual([len(page.systems) for page in document.pages], [1, 1])
+        self.assertEqual(canvas.page_index, 1)
+
+        left_mm, right_mm = canvas._system_column_bounds(canvas.current_page, following)
+        canvas.update_mouse_cursor(
+            QPointF((left_mm + right_mm) / 2.0, canvas._time_to_y_mm(following, following.start_tick))
+        )
+        canvas.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier))
+
+        self.assertFalse(following.force_page_break_before)
+        self.assertEqual([len(page.systems) for page in document.pages], [2])
+        self.assertEqual(canvas.page_index, 0)
+
+    def test_system_break_tool_ignores_backspace_for_forced_page_breaks(self) -> None:
+        document = KeyTab2Document.new()
+        canvas = PaperCanvas(document)
+        leading = document.pages[0].systems[0]
+        following = document.split_system_at(document.pages[0].id, leading.id, 1024)
+        canvas.select_system_break_mode()
+        following.force_page_break_before = True
+        left_mm, right_mm = canvas._system_column_bounds(canvas.current_page, following)
+        canvas.update_mouse_cursor(
+            QPointF((left_mm + right_mm) / 2.0, canvas._time_to_y_mm(following, following.start_tick))
+        )
+
+        canvas.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Backspace, Qt.KeyboardModifier.NoModifier))
+
+        self.assertTrue(following.force_page_break_before)
+
+    def test_system_break_tool_receives_enter_from_paper_view(self) -> None:
+        document = KeyTab2Document.new()
+        canvas = PaperCanvas(document)
+        paper_view = PaperView()
+        paper_view.setWidget(canvas)
+        leading = document.pages[0].systems[0]
+        following = document.split_system_at(document.pages[0].id, leading.id, 1024)
+        canvas.select_system_break_mode()
+        left_mm, right_mm = canvas._system_column_bounds(canvas.current_page, following)
+        canvas.update_mouse_cursor(
+            QPointF((left_mm + right_mm) / 2.0, canvas._time_to_y_mm(following, following.start_tick))
+        )
+
+        paper_view.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier))
+
+        self.assertTrue(following.force_page_break_before)
+        self.assertEqual([len(page.systems) for page in document.pages], [1, 1])
 
     def test_permanent_stave_control_is_centred_on_stave_width(self) -> None:
         app = QApplication.instance() or QApplication([])

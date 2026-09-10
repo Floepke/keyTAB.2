@@ -156,6 +156,7 @@ class System:
     first_measure_number: int = 1
     left_margin_mm: float = 5.0
     right_margin_mm: float = 5.0
+    force_page_break_before: bool = False
     top_mm: float = field(default=10.0, repr=False, compare=False)
     height_mm: float = field(default=277.0, repr=False, compare=False)
     staves: list[Stave] = field(default_factory=lambda: [Stave()])
@@ -236,12 +237,19 @@ class KeyTab2Document:
 
     def split_system_at(self, page_id: str, system_id: str, time: int) -> System:
         """Split one system at a barline and return the new following system."""
-        page = next((page for page in self.pages if page.id == page_id), None)
-        if page is None:
-            raise ValueError("Page not found")
-        index = next((index for index, system in enumerate(page.systems) if system.id == system_id), None)
-        if index is None:
+        del page_id
+        located_system = next(
+            (
+                (page, index)
+                for page in self.pages
+                for index, candidate in enumerate(page.systems)
+                if candidate.id == system_id
+            ),
+            None,
+        )
+        if located_system is None:
             raise ValueError("System not found")
+        page, index = located_system
         system = page.systems[index]
         if not system.start_tick < time < system.end_tick:
             raise ValueError("System split time must be inside the system")
@@ -266,8 +274,22 @@ class KeyTab2Document:
         system.end_tick = time
         system.touch()
         page.systems.insert(index + 1, following_system)
-        self.paginate_page(page.id)
+        self.repaginate_document()
         return following_system
+
+    def set_forced_page_break_before(self, system_id: str, enabled: bool) -> None:
+        """Set whether a system must begin on a fresh page."""
+        systems = [system for page in self.pages for system in page.systems]
+        system = next((candidate for candidate in systems if candidate.id == system_id), None)
+        if system is None:
+            raise ValueError("System not found")
+        if system is systems[0] and enabled:
+            raise ValueError("The first system cannot start a new page")
+        if system.force_page_break_before == enabled:
+            return
+        system.force_page_break_before = enabled
+        system.touch()
+        self.repaginate_document()
 
     def time_signature_segment_at(self, time: int) -> tuple[int, int]:
         """Return the base-grid segment and its absolute start tick for a barline."""
@@ -448,7 +470,7 @@ class KeyTab2Document:
         current_width_mm = 0.0
         for system in page.systems:
             system_width_mm = self._system_required_width_mm(system)
-            if page_groups[-1] and current_width_mm + system_width_mm > available_width_mm:
+            if page_groups[-1] and (system.force_page_break_before or current_width_mm + system_width_mm > available_width_mm):
                 page_groups.append([])
                 current_width_mm = 0.0
             page_groups[-1].append(system)
@@ -472,8 +494,20 @@ class KeyTab2Document:
         """Repack automatic pages after a system merge crosses a page boundary."""
         first_page = self.pages[0]
         systems = [system for page in self.pages for system in page.systems]
+        page_events = [event for page in self.pages for event in page.events]
         self.pages = [Page(width_mm=first_page.width_mm, height_mm=first_page.height_mm, systems=systems)]
         self.paginate_page(self.pages[0].id)
+        for event in page_events:
+            event_tick = self._event_start_tick(event)
+            page = next(
+                (
+                    candidate
+                    for candidate in self.pages
+                    if candidate.systems[0].start_tick <= event_tick < candidate.systems[-1].end_tick
+                ),
+                self.pages[-1],
+            )
+            page.events.append(event)
 
     def repaginate_document(self) -> None:
         """Pack all systems into the fewest automatic pages their widths allow."""
@@ -620,7 +654,7 @@ class KeyTab2Document:
         timeline_events = [cls._event_from_dict(event_data) for event_data in timeline_data]
         if not all(isinstance(event, TempoEvent) for event in timeline_events):
             raise ValueError("Document timeline supports tempo events only")
-        return cls(
+        document = cls(
             score_info=info,
             layout=layout,
             base_grid=base_grid,
@@ -629,6 +663,8 @@ class KeyTab2Document:
             created_at=str(data.get("created_at", _timestamp())),
             modified_at=str(data.get("modified_at", _timestamp())),
         )
+        document.repaginate_document()
+        return document
 
     @staticmethod
     def _page_from_dict(data: object) -> Page:
@@ -662,6 +698,7 @@ class KeyTab2Document:
             first_measure_number=int(data.get("first_measure_number", 1)),
             left_margin_mm=float(data.get("left_margin_mm", 5.0)),
             right_margin_mm=float(data.get("right_margin_mm", 5.0)),
+            force_page_break_before=bool(data.get("force_page_break_before", False)),
             staves=[KeyTab2Document._stave_from_dict(stave_data) for stave_data in staves_data],
             events=KeyTab2Document._events_from_dict(data.get("events", [])),
             id=str(data.get("id", _new_id())),

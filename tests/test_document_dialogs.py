@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QApplication, QFontComboBox
 
 from keytab2_model import GridBandEvent, KeyTab2Document
 from ui.dialogs.info_dialog import InfoDialog
+from ui.dialogs.preferences_dialog import PreferencesDialog
 from ui.dialogs.style_dialog import StyleDialog
 
 
@@ -26,6 +27,13 @@ class DocumentDialogTests(unittest.TestCase):
         self.assertEqual(document.score_info.title, "Prelude")
         self.assertEqual(document.score_info.composer, "J. S. Bach")
         self.assertEqual(document.score_info.copyright, "Public domain")
+
+    def test_preferences_dialog_returns_save_on_exit_value(self) -> None:
+        dialog = PreferencesDialog(False)
+
+        self.assertFalse(dialog.save_on_exit_enabled())
+        dialog.save_on_exit.setChecked(True)
+        self.assertTrue(dialog.save_on_exit_enabled())
 
     def test_style_dialog_round_trips_every_layout_field(self) -> None:
         document = KeyTab2Document.new()

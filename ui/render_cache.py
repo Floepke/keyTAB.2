@@ -332,8 +332,20 @@ def build_stave_render_data(
             ]
             if len(members) < 2:
                 continue
+            continuation_members = [
+                geometry
+                for note, geometry in zip(notes, geometries, strict=True)
+                if geometry.hand == hand
+                and geometry.event_id not in chord_interior_ids
+                and note.time < window_start < note.time + note.duration
+                and any(
+                    note.time < tick < note.time + note.duration
+                    and window_start <= tick < window_end
+                    for tick in (*starts_by_hand[hand], *ends_by_hand[hand], *measure_starts)
+                )
+            ]
             first, last = members[0], members[-1]
-            pitch_anchor = min(members, key=lambda note: note.stem[0]) if hand == "left" else max(members, key=lambda note: note.stem[0])
+            pitch_anchor = min((*members, *continuation_members), key=lambda note: note.stem[0]) if hand == "left" else max((*members, *continuation_members), key=lambda note: note.stem[0])
             beam_x1 = pitch_anchor.stem[2]
             beam_x2 = beam_x1 - semitone_mm if hand == "left" else beam_x1 + semitone_mm
             beam_y1 = first.stem[1]
