@@ -393,9 +393,9 @@ class StaveDrawerTests(unittest.TestCase):
         second_width = columns[1][1] - columns[1][0]
         self.assertGreater(first_width, second_width)
         self.assertLess(columns[0][1], columns[1][0])
-        outer_left = columns[0][0] - page.systems[0].left_margin_mm - document.layout.page_left_margin_mm
-        inner_gap = columns[1][0] - page.systems[1].left_margin_mm - (columns[0][1] + page.systems[0].right_margin_mm)
-        outer_right = page.width_mm - document.layout.page_right_margin_mm - page.systems[1].right_margin_mm - columns[1][1]
+        outer_left = columns[0][0] - document.layout.page_left_margin_mm
+        inner_gap = columns[1][0] - columns[0][1]
+        outer_right = page.width_mm - document.layout.page_right_margin_mm - columns[1][1]
         self.assertAlmostEqual(outer_left, inner_gap)
         self.assertAlmostEqual(inner_gap, outer_right)
         for system, column in zip(page.systems, columns, strict=True):
@@ -413,8 +413,8 @@ class StaveDrawerTests(unittest.TestCase):
         canvas = PaperCanvas(document)
         left_mm, right_mm = canvas._system_column_bounds(page, system)
 
-        left_space = left_mm - system.left_margin_mm - document.layout.page_left_margin_mm
-        right_space = page.width_mm - document.layout.page_right_margin_mm - system.right_margin_mm - right_mm
+        left_space = left_mm - document.layout.page_left_margin_mm
+        right_space = page.width_mm - document.layout.page_right_margin_mm - right_mm
 
         self.assertAlmostEqual(left_space, right_space)
 
@@ -432,7 +432,10 @@ class StaveDrawerTests(unittest.TestCase):
 
         self.assertIsNotNone(first_bounds)
         self.assertIsNotNone(second_bounds)
-        self.assertAlmostEqual(second_bounds[0] - first_bounds[1], PaperCanvas.STAVE_GAP_MM)
+        self.assertAlmostEqual(
+            second_bounds[0] - first_bounds[1],
+            system.staves[0].right_margin_mm + system.staves[1].left_margin_mm,
+        )
         self.assertAlmostEqual((first_bounds[0] + second_bounds[1]) * 0.5, sum(column) * 0.5)
         self.assertEqual(StaveDrawer.effective_scale(document.layout, system.staves[1]), document.layout.scale * 0.5)
 

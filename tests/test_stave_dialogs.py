@@ -66,6 +66,16 @@ class StaveDialogsTests(unittest.TestCase):
         self.assertEqual(dialog.staves[0].scale, 1.5)
         self.assertEqual(dialog._scale_button.text(), "Set Stave Scale")
 
+    def test_staves_dialog_marks_margin_edits_for_global_propagation(self) -> None:
+        source_stave = Stave(name="Upper")
+        dialog = StavesDialog([source_stave])
+
+        with patch("ui.dialogs.stave_dialogs.QInputDialog.getDouble", return_value=(12.5, True)):
+            dialog._edit_margin("left")
+
+        self.assertEqual(dialog.staves[0].left_margin_mm, 12.5)
+        self.assertEqual(dialog.edited_fields_by_id, {source_stave.id: {"left_margin_mm"}})
+
     def test_applying_stave_order_preserves_system_stave_events(self) -> None:
         document = KeyTab2Document.new()
         leading = document.pages[0].systems[0]
@@ -99,6 +109,47 @@ class StaveDialogsTests(unittest.TestCase):
 
         self.assertEqual(system.staves[0].scale, 1.0)
         self.assertEqual(system.staves[1].scale, 1.5)
+
+    def test_setting_a_stave_margin_leaves_siblings_and_following_system_unchanged(self) -> None:
+        document = KeyTab2Document.new()
+        leading = document.pages[0].systems[0]
+        leading.staves.append(Stave(name="Lower"))
+        following = document.split_system_at(document.pages[0].id, leading.id, 1024)
+        canvas = PaperCanvas(document)
+
+        canvas._apply_stave_margin(leading, leading.staves[1], "left", 18.0)
+
+        self.assertEqual(leading.staves[0].left_margin_mm, 5.0)
+        self.assertEqual(leading.staves[1].left_margin_mm, 18.0)
+        self.assertEqual(following.staves[1].left_margin_mm, 5.0)
+
+    def test_explicit_global_stave_configuration_preserves_unedited_local_values(self) -> None:
+        document = KeyTab2Document.new()
+        leading = document.pages[0].systems[0]
+        following = document.split_system_at(document.pages[0].id, leading.id, 1024)
+        following.staves[0].left_margin_mm = 14.0
+        canvas = PaperCanvas(document)
+        configured = Stave(
+            name="Treble",
+            pitch_range=[48, 96],
+            scale=1.5,
+            left_margin_mm=22.0,
+            right_margin_mm=9.0,
+            id=leading.staves[0].id,
+        )
+
+        canvas._apply_stave_configuration(
+            leading.staves,
+            [configured],
+            {configured.id: {"name", "scale", "right_margin_mm"}},
+        )
+
+        self.assertEqual([stave.name for stave in (leading.staves[0], following.staves[0])], ["Treble", "Treble"])
+        self.assertEqual([stave.scale for stave in (leading.staves[0], following.staves[0])], [1.5, 1.5])
+        self.assertEqual([stave.right_margin_mm for stave in (leading.staves[0], following.staves[0])], [9.0, 9.0])
+        self.assertEqual(leading.staves[0].left_margin_mm, 5.0)
+        self.assertEqual(following.staves[0].left_margin_mm, 14.0)
+        self.assertEqual([stave.pitch_range for stave in (leading.staves[0], following.staves[0])], [[36, 84], [36, 84]])
 
 
 if __name__ == "__main__":

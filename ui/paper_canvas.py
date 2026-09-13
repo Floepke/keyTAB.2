@@ -58,6 +58,7 @@ class PaperCanvas(QWidget):
     STAVE_CONTROL_GAP_MM = 1.5
     ADD_MEASURE_CONTROL_SIZE_MM = 5.0
     ADD_MEASURE_CONTROL_GAP_MM = 2.0
+    RIGHT_SELECTION_DRAG_THRESHOLD_PX = 4.0
 
     def __init__(self, document: KeyTab2Document, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -74,6 +75,8 @@ class PaperCanvas(QWidget):
         self._clipboard_slurs: list[SlurEvent] = []
         self._selection_anchor_mm: QPointF | None = None
         self._selection_current_mm: QPointF | None = None
+        self._right_selection_anchor_px: QPointF | None = None
+        self._right_selection_dragging = False
         self._document_change_callback = None
         self._undo_callback = None
         self._redo_callback = None
@@ -111,6 +114,8 @@ class PaperCanvas(QWidget):
         self._selected_slur_ids.clear()
         self._selection_anchor_mm = None
         self._selection_current_mm = None
+        self._right_selection_anchor_px = None
+        self._right_selection_dragging = False
         self.invalidate_render_cache()
         self._update_size()
         self.update()
@@ -154,6 +159,8 @@ class PaperCanvas(QWidget):
         self._selected_slur_ids.clear()
         self._selection_anchor_mm = None
         self._selection_current_mm = None
+        self._right_selection_anchor_px = None
+        self._right_selection_dragging = False
         self._mouse_stave_target = None
         self._last_mouse_position_mm = None
         self._update_size()
@@ -566,33 +573,31 @@ class PaperCanvas(QWidget):
                         self._document.layout.engraving_mm(self._document.layout.slur_width_middle_mm, stave.scale),
                         slur_segment_count,
                     )
-            if include_editor_controls:
-                self._draw_stave_control(stave_drawer, system, stave, left_mm)
-
-    def _draw_stave_control(self, drawer: StaveDrawer, system, stave, left_mm: float) -> None:
+    def _draw_stave_control(self, painter: QPainter, system, stave, left_mm: float) -> None:
         """Draw the editor-only stave configuration control above the stave centre."""
         centre_x_mm, centre_y_mm = self._stave_control_centre(system, stave, left_mm)
-        left_mm = centre_x_mm - self.STAVE_CONTROL_SIZE_MM * 0.5
-        top_mm = centre_y_mm - self.STAVE_CONTROL_SIZE_MM * 0.5
-        drawer.draw_rectangle(
-            left_mm,
-            top_mm,
-            self.STAVE_CONTROL_SIZE_MM,
-            self.STAVE_CONTROL_SIZE_MM,
-            fill_color=(0.78, 0.78, 0.78),
-            stroke_color=(0.58, 0.58, 0.58),
-            stroke_width_mm=0.25,
-            tags=("editor_control",),
+        size_px = self.STAVE_CONTROL_SIZE_MM * self.pixels_per_mm
+        centre_px = QPointF(centre_x_mm * self.pixels_per_mm, centre_y_mm * self.pixels_per_mm)
+        control_rect = QRectF(
+            centre_px.x() - size_px * 0.5,
+            centre_px.y() - size_px * 0.5,
+            size_px,
+            size_px,
         )
+        painter.save()
+        painter.setPen(QPen(QColor(148, 148, 148), max(1, round(self.pixels_per_mm * 0.25))))
+        painter.setBrush(QColor(199, 199, 199))
+        painter.drawRect(control_rect)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(89, 89, 89))
         for offset_mm in (-1.0, 0.0, 1.0):
-            drawer.draw_oval(
-                centre_x_mm - 0.28,
-                centre_y_mm + offset_mm - 0.28,
-                0.56,
-                0.56,
-                fill_color=(0.35, 0.35, 0.35),
-                tags=("editor_control",),
+            dot_radius_px = 0.28 * self.pixels_per_mm
+            painter.drawEllipse(
+                QPointF(centre_px.x(), (centre_y_mm + offset_mm) * self.pixels_per_mm),
+                dot_radius_px,
+                dot_radius_px,
             )
+        painter.restore()
 
     def _draw_add_measure_control(self, drawer: GridDrawer, system, column_bounds: tuple[float, float]) -> None:
         centre_x_mm = (column_bounds[0] + column_bounds[1]) * 0.5
@@ -664,6 +669,10 @@ class PaperCanvas(QWidget):
         """Draw ephemeral selection state; this pass is never exported."""
         self._draw_playhead(painter)
         self._draw_selection_overlay(painter, exposed_rect)
+        hovered_control = self._hovered_stave_control_target()
+        if hovered_control is not None:
+            system, stave, left_mm = hovered_control
+            self._draw_stave_control(painter, system, stave, left_mm)
         if self._tool_manager.active_tool is self._system_break_tool:
             highlight = self._system_break_highlight_geometry()
             if highlight is not None:
@@ -831,6 +840,7 @@ class PaperCanvas(QWidget):
             return
         stave_index = edit.system.staves.index(edit.stave)
         accent = self.palette().color(QPalette.ColorRole.Highlight)
+        ink = QColor.fromRgbF(*self.INK_COLOR)
         painter.save()
         try:
             painter.setOpacity(0.55)
@@ -864,7 +874,8 @@ class PaperCanvas(QWidget):
                 ])
                 painter.drawPolygon(body)
                 if system is final_system:
-                    painter.setPen(QPen(accent, max(1, round(self.pixels_per_mm * 0.6))))
+                    painter.setOpacity(1.0)
+                    painter.setPen(QPen(ink, max(1, round(self.pixels_per_mm * 0.6))))
                     painter.drawLine(
                         QPointF((x_mm - semitone_mm) * self.pixels_per_mm, end_y_mm * self.pixels_per_mm),
                         QPointF((x_mm + semitone_mm) * self.pixels_per_mm, end_y_mm * self.pixels_per_mm),
@@ -909,6 +920,8 @@ class PaperCanvas(QWidget):
 
     def _draw_selection_overlay(self, painter: QPainter, exposed_rect: QRect) -> None:
         accent = self.palette().color(QPalette.ColorRole.Highlight)
+        ink = QColor.fromRgbF(*self.INK_COLOR)
+        paper = QColor.fromRgbF(*self.PAPER_COLOR)
         page = self._current_page()
         drawer = StaveDrawer(None, self.INK_COLOR)
         painter.save()
@@ -928,10 +941,10 @@ class PaperCanvas(QWidget):
                         painter.setPen(Qt.PenStyle.NoPen)
                         painter.setBrush(accent)
                         painter.drawPolygon(polygon(note.body_points_mm))
-                        painter.setPen(QPen(accent, max(1, round(note.head_outline_width_mm * self.pixels_per_mm))))
-                        painter.setBrush(accent)
+                        painter.setPen(QPen(ink, max(1, round(note.head_outline_width_mm * self.pixels_per_mm))))
+                        painter.setBrush(ink if note.head.filled else paper)
                         painter.drawPolygon(polygon(note.head.points_mm))
-                        painter.setPen(QPen(accent, max(1, round(note.stem_width_mm * self.pixels_per_mm))))
+                        painter.setPen(QPen(ink, max(1, round(note.stem_width_mm * self.pixels_per_mm))))
                         painter.drawLine(QPointF(note.stem[0] * self.pixels_per_mm, note.stem[1] * self.pixels_per_mm), QPointF(note.stem[2] * self.pixels_per_mm, note.stem[3] * self.pixels_per_mm))
             if self._selection_anchor_mm is not None and self._selection_current_mm is not None:
                 rect = QRectF(self._selection_anchor_mm * self.pixels_per_mm, self._selection_current_mm * self.pixels_per_mm).normalized()
@@ -994,6 +1007,18 @@ class PaperCanvas(QWidget):
 
     def mouseMoveEvent(self, event) -> None:
         self.update_mouse_cursor(self._point_mm(event.position()))
+        if self._right_selection_anchor_px is not None and event.buttons() & Qt.MouseButton.RightButton:
+            point_px = event.position()
+            if not self._right_selection_dragging:
+                distance = (point_px - self._right_selection_anchor_px).manhattanLength()
+                if distance >= self.RIGHT_SELECTION_DRAG_THRESHOLD_PX:
+                    self._right_selection_dragging = True
+                    self._selection_anchor_mm = self._point_mm(self._right_selection_anchor_px)
+            if self._right_selection_dragging:
+                self._selection_current_mm = self._point_mm(point_px)
+                self.update()
+            event.accept()
+            return
         if self._selection_anchor_mm is not None:
             self._selection_current_mm = self._point_mm(event.position())
             self.update()
@@ -1050,14 +1075,35 @@ class PaperCanvas(QWidget):
             event.accept()
             return
         if event.button() == Qt.MouseButton.RightButton:
+            self.setFocus()
             self.update_mouse_cursor(self._point_mm(event.position()))
-            active_tool = self._tool_manager.active_tool
-            if active_tool is not None and active_tool.on_right_click(self._point_mm(event.position())):
-                event.accept()
-                return
+            self._right_selection_anchor_px = QPointF(event.position())
+            self._right_selection_dragging = False
+            event.accept()
+            return
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.RightButton and self._right_selection_anchor_px is not None:
+            if self._right_selection_dragging:
+                self._selection_current_mm = self._point_mm(event.position())
+                self._select_notes_in_rectangle()
+                self._selection_anchor_mm = None
+                self._selection_current_mm = None
+                self.update()
+            else:
+                if self._selected_note_ids or self._selected_slur_ids:
+                    self._selected_note_ids.clear()
+                    self._selected_slur_ids.clear()
+                    self.update()
+                else:
+                    active_tool = self._tool_manager.active_tool
+                    if active_tool is not None:
+                        active_tool.on_right_click(self._point_mm(event.position()))
+            self._right_selection_anchor_px = None
+            self._right_selection_dragging = False
+            event.accept()
+            return
         if event.button() == Qt.MouseButton.LeftButton and self._selection_anchor_mm is not None:
             self._selection_current_mm = self._point_mm(event.position())
             self._select_notes_in_rectangle()
@@ -1703,16 +1749,39 @@ class PaperCanvas(QWidget):
             self.mouse_pitch = self.pitch_at(stave, left_mm, point_mm.x(), allow_outside_range=allow_outside_range)
         self.update()
 
-    def _stave_control_at(self, point_mm: QPointF):
+    def _hovered_stave_control_target(self):
+        if self._last_mouse_position_mm is None:
+            return None
+        return self._stave_control_hover_target(self._last_mouse_position_mm)
+
+    def _stave_control_hover_target(self, point_mm: QPointF):
+        """Return the stave whose top hover strip exposes its context control."""
         page = self._current_page()
         drawer = StaveDrawer(None, self.INK_COLOR)
+        hover_depth_mm = self.CONTROL_HOVER_TOLERANCE_PX / self.pixels_per_mm
         for system in page.systems:
             positions = self._centered_stave_left_positions(system, drawer, self._document.layout, *self._system_column_bounds(page, system))
             for stave, left_mm in zip(system.staves, positions, strict=True):
+                bounds = drawer.bounds(stave, self._document.layout, left_mm, system)
                 centre_x_mm, centre_y_mm = self._stave_control_centre(system, stave, left_mm)
                 half_size_mm = self.STAVE_CONTROL_SIZE_MM * 0.5
-                if abs(point_mm.x() - centre_x_mm) <= half_size_mm and abs(point_mm.y() - centre_y_mm) <= half_size_mm:
-                    return system, stave
+                left_bound_mm, right_bound_mm = bounds if bounds is not None else (centre_x_mm, centre_x_mm)
+                if (
+                    left_bound_mm - half_size_mm <= point_mm.x() <= right_bound_mm + half_size_mm
+                    and centre_y_mm - half_size_mm <= point_mm.y() <= system.top_mm + hover_depth_mm
+                ):
+                    return system, stave, left_mm
+        return None
+
+    def _stave_control_at(self, point_mm: QPointF):
+        hovered_control = self._stave_control_hover_target(point_mm)
+        if hovered_control is None:
+            return None
+        system, stave, left_mm = hovered_control
+        centre_x_mm, centre_y_mm = self._stave_control_centre(system, stave, left_mm)
+        half_size_mm = self.STAVE_CONTROL_SIZE_MM * 0.5
+        if abs(point_mm.x() - centre_x_mm) <= half_size_mm and abs(point_mm.y() - centre_y_mm) <= half_size_mm:
+            return system, stave
         return None
 
     def _stave_control_centre(self, system, stave, left_mm: float) -> tuple[float, float]:
@@ -1782,26 +1851,28 @@ class PaperCanvas(QWidget):
     def _set_stave_margin(self, side: Literal["left", "right"]) -> None:
         target = self._control_target
         system = self._system_by_id(target[0]) if target is not None else None
-        if system is None:
+        stave = next((candidate for candidate in system.staves if candidate.id == target[1]), None) if system and target else None
+        if stave is None:
             return
         attribute = f"{side}_margin_mm"
         margin_mm, accepted = QInputDialog.getDouble(
             self,
             f"Set Stave Margin {side.title()}",
             f"Stave margin {side} (mm)",
-            getattr(system, attribute),
+            getattr(stave, attribute),
             0.0,
             100.0,
             2,
         )
         if accepted:
-            self._apply_stave_margin(system, side, margin_mm)
+            self._apply_stave_margin(system, stave, side, margin_mm)
 
-    def _apply_stave_margin(self, system, side: Literal["left", "right"], margin_mm: float) -> None:
-        """Apply a margin around one system's fixed-width stave group."""
-        if system not in self._current_page().systems:
-            raise ValueError("System does not belong to the current page")
-        setattr(system, f"{side}_margin_mm", margin_mm)
+    def _apply_stave_margin(self, system, stave: Stave, side: Literal["left", "right"], margin_mm: float) -> None:
+        """Apply a margin to one stave in one system."""
+        if system not in self._current_page().systems or stave not in system.staves:
+            raise ValueError("Stave does not belong to the current system")
+        setattr(stave, f"{side}_margin_mm", margin_mm)
+        stave.touch()
         system.touch()
         self._page_system_bounds_cache.clear()
         self._document.repaginate_document()
@@ -1818,11 +1889,12 @@ class PaperCanvas(QWidget):
         dialog = StavesDialog(system.staves, self)
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
-        self._apply_stave_configuration(system.staves, dialog.staves)
+        self._apply_stave_configuration(system.staves, dialog.staves, dialog.edited_fields_by_id)
 
-    def _apply_stave_configuration(self, source_staves, configured_staves) -> None:
+    def _apply_stave_configuration(self, source_staves, configured_staves, edited_fields_by_id=None) -> None:
         """Apply a template's stave order and settings to every document system."""
         source_indices = {stave.id: index for index, stave in enumerate(source_staves)}
+        all_fields = {"name", "pitch_range", "scale", "left_margin_mm", "right_margin_mm"}
         for page in self._document.pages:
             for candidate_system in page.systems:
                 existing_staves = candidate_system.staves
@@ -1834,12 +1906,22 @@ class PaperCanvas(QWidget):
                             name=configured_stave.name,
                             pitch_range=list(configured_stave.pitch_range),
                             scale=configured_stave.scale,
+                            left_margin_mm=configured_stave.left_margin_mm,
+                            right_margin_mm=configured_stave.right_margin_mm,
                         ))
                         continue
                     stave = existing_staves[source_index]
-                    stave.name = configured_stave.name
-                    stave.pitch_range = list(configured_stave.pitch_range)
-                    stave.scale = configured_stave.scale
+                    edited_fields = all_fields if edited_fields_by_id is None else edited_fields_by_id.get(configured_stave.id, set())
+                    if "name" in edited_fields:
+                        stave.name = configured_stave.name
+                    if "pitch_range" in edited_fields:
+                        stave.pitch_range = list(configured_stave.pitch_range)
+                    if "scale" in edited_fields:
+                        stave.scale = configured_stave.scale
+                    if "left_margin_mm" in edited_fields:
+                        stave.left_margin_mm = configured_stave.left_margin_mm
+                    if "right_margin_mm" in edited_fields:
+                        stave.right_margin_mm = configured_stave.right_margin_mm
                     stave.touch()
                     reordered_staves.append(stave)
                 candidate_system.staves = reordered_staves
@@ -1876,22 +1958,23 @@ class PaperCanvas(QWidget):
 
     @staticmethod
     def _centered_stave_left_positions(system, stave_drawer: StaveDrawer, layout, left_limit_mm: float, right_limit_mm: float) -> list[float]:
-        """Center every fixed-width stave group inside one system's margins."""
+        """Center a stave group whose outer and inter-stave space comes from stave margins."""
         bounds = [stave_drawer.bounds(stave, layout, 0.0, system) for stave in system.staves]
-        visual_bounds = [bound for bound in bounds if bound is not None]
-        if not visual_bounds:
-            return [(left_limit_mm + right_limit_mm) * 0.5] * len(system.staves)
-        widths = [right_mm - left_mm for left_mm, right_mm in visual_bounds]
-        group_width_mm = sum(widths) + PaperCanvas.STAVE_GAP_MM * (len(widths) - 1)
+        widths = [0.0 if bound is None else bound[1] - bound[0] for bound in bounds]
+        group_width_mm = sum(
+            stave.left_margin_mm + width_mm + stave.right_margin_mm
+            for stave, width_mm in zip(system.staves, widths, strict=True)
+        )
         cursor_mm = left_limit_mm + (right_limit_mm - left_limit_mm - group_width_mm) * 0.5
         left_positions: list[float] = []
-        for bound in bounds:
+        for stave, bound, width_mm in zip(system.staves, bounds, widths, strict=True):
+            cursor_mm += stave.left_margin_mm
             if bound is None:
                 left_positions.append(cursor_mm)
-                continue
-            first_x_mm, last_x_mm = bound
-            left_positions.append(cursor_mm - first_x_mm)
-            cursor_mm += last_x_mm - first_x_mm + PaperCanvas.STAVE_GAP_MM
+            else:
+                first_x_mm, _ = bound
+                left_positions.append(cursor_mm - first_x_mm)
+            cursor_mm += width_mm + stave.right_margin_mm
         return left_positions
 
     def _system_column_bounds(self, page, system) -> tuple[float, float]:
@@ -1915,8 +1998,8 @@ class PaperCanvas(QWidget):
             column_width = available_width / len(page.systems)
             return {
                 system.id: (
-                    available_left + index * column_width + system.left_margin_mm,
-                    available_left + (index + 1) * column_width - system.right_margin_mm,
+                    available_left + index * column_width,
+                    available_left + (index + 1) * column_width,
                 )
                 for index, system in enumerate(page.systems)
             }
@@ -1924,10 +2007,10 @@ class PaperCanvas(QWidget):
         cursor_mm = available_left + gap_width
         bounds: dict[str, tuple[float, float]] = {}
         for system, footprint_width in zip(page.systems, footprints, strict=True):
-            left_mm = cursor_mm + system.left_margin_mm
-            right_mm = cursor_mm + footprint_width - system.right_margin_mm
+            left_mm = cursor_mm
+            right_mm = cursor_mm + footprint_width
             if right_mm <= left_mm:
-                raise ValueError("System margins leave no stave space")
+                raise ValueError("System staves leave no space")
             bounds[system.id] = (left_mm, right_mm)
             cursor_mm += footprint_width + gap_width
         return bounds

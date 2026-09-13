@@ -144,11 +144,25 @@ class FileManager:
         return target
 
     def recent_paths(self) -> tuple[Path, ...]:
-        """Return persisted document paths in most-recent-first order."""
-        recent_files = get_appdata_manager().get("recent_files", [])
+        """Return existing persisted document paths in most-recent-first order."""
+        app_data = get_appdata_manager()
+        recent_files = app_data.get("recent_files", [])
         if not isinstance(recent_files, list):
             return ()
-        return tuple(Path(str(path)).expanduser() for path in recent_files if str(path).strip())
+        original_paths = [str(path) for path in recent_files if str(path).strip()]
+        paths: list[Path] = []
+        seen: set[Path] = set()
+        for raw_path in original_paths:
+            path = Path(raw_path).expanduser()
+            if path in seen or not path.is_file():
+                continue
+            seen.add(path)
+            paths.append(path)
+        cleaned_paths = [str(path) for path in paths]
+        if cleaned_paths != original_paths:
+            app_data.set("recent_files", cleaned_paths)
+            app_data.save()
+        return tuple(paths)
 
     def clear_recent_paths(self) -> None:
         """Remove all persisted recent document paths."""

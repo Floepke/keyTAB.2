@@ -106,28 +106,46 @@ class FileManagerTests(unittest.TestCase):
         self.assertEqual((systems[0].start_tick, systems[0].end_tick), (0, 6144))
         self.assertEqual(systems[1].staves[0].events[0].pitch, 60)
     def test_saves_and_loads_the_page_oriented_document(self) -> None:
-        manager = FileManager()
-        manager.document.score_info.title = "File manager round trip"
-        page = manager.document.pages[0]
-        system = page.systems[0]
-        system.staves[0].events.append(NoteEvent(time=256, duration=128, pitch=60))
-        system.events.append(TextEvent(text="dolce", start_tick=256))
-        manager.document.timeline_events.append(TempoEvent(start_tick=1024, tempo=96))
+        app_data = Mock()
+        app_data.get.return_value = []
+        with patch("file_manager.get_appdata_manager", return_value=app_data):
+            manager = FileManager()
+            manager.document.score_info.title = "File manager round trip"
+            page = manager.document.pages[0]
+            system = page.systems[0]
+            system.staves[0].events.append(NoteEvent(time=256, duration=128, pitch=60))
+            system.events.append(TextEvent(text="dolce", start_tick=256))
+            manager.document.timeline_events.append(TempoEvent(start_tick=1024, tempo=96))
 
-        with tempfile.TemporaryDirectory() as directory:
-            requested_path = Path(directory) / "round-trip"
-            self.assertTrue(manager.save_to_path(requested_path))
-            saved_path = requested_path.with_suffix(".keytab2")
-            self.assertTrue(saved_path.exists())
+            with tempfile.TemporaryDirectory() as directory:
+                requested_path = Path(directory) / "round-trip"
+                self.assertTrue(manager.save_to_path(requested_path))
+                saved_path = requested_path.with_suffix(".keytab2")
+                self.assertTrue(saved_path.exists())
 
-            restored_manager = FileManager()
-            self.assertTrue(restored_manager.open_path(saved_path))
+                restored_manager = FileManager()
+                self.assertTrue(restored_manager.open_path(saved_path))
 
         restored = restored_manager.document
         self.assertEqual(restored.score_info.title, "File manager round trip")
         self.assertEqual(restored.pages[0].systems[0].staves[0].events[0].pitch, 60)
         self.assertEqual(restored.pages[0].systems[0].events[0].text, "dolce")
         self.assertEqual(restored.timeline_events[-1].tempo, 96)
+
+    def test_recent_paths_prunes_missing_and_duplicate_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            existing_path = Path(directory) / "score.keytab2"
+            missing_path = Path(directory) / "round-trip.keytab2"
+            KeyTab2Document.new().save(existing_path)
+            app_data = Mock()
+            app_data.get.return_value = [str(missing_path), str(existing_path), str(existing_path)]
+
+            with patch("file_manager.get_appdata_manager", return_value=app_data):
+                recent_paths = FileManager().recent_paths()
+
+        self.assertEqual(recent_paths, (existing_path,))
+        app_data.set.assert_called_once_with("recent_files", [str(existing_path)])
+        app_data.save.assert_called_once_with()
 
 
 if __name__ == "__main__":

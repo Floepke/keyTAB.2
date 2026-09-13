@@ -39,6 +39,21 @@ class SelectionTests(unittest.TestCase):
         self.assertTrue(self.tool.on_left_press(point))
         self.assertTrue(self.tool.on_left_release(point))
 
+    def _mouse_event(
+        self,
+        event_type: QEvent.Type,
+        point_mm: QPointF,
+        button: Qt.MouseButton,
+        buttons: Qt.MouseButton,
+    ) -> QMouseEvent:
+        return QMouseEvent(
+            event_type,
+            point_mm * self.canvas.pixels_per_mm,
+            button,
+            buttons,
+            Qt.KeyboardModifier.NoModifier,
+        )
+
     def test_marquee_selects_notes_and_brackets_map_their_hand(self) -> None:
         self._add_note(60, 256)
         self._add_note(64, 512)
@@ -95,6 +110,77 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(self.canvas._selected_note_ids, {note_id})
         self.assertEqual(hands, ["left"])
         self.canvas.mouseReleaseEvent(release_event)
+
+    def test_right_click_deletes_a_note_on_release(self) -> None:
+        self._add_note(60, 256)
+        point_mm = self._point(60, 256)
+
+        self.canvas.mousePressEvent(self._mouse_event(
+            QEvent.Type.MouseButtonPress,
+            point_mm,
+            Qt.MouseButton.RightButton,
+            Qt.MouseButton.RightButton,
+        ))
+
+        self.assertEqual(len(self.stave.events), 1)
+        self.canvas.mouseReleaseEvent(self._mouse_event(
+            QEvent.Type.MouseButtonRelease,
+            point_mm,
+            Qt.MouseButton.RightButton,
+            Qt.MouseButton.NoButton,
+        ))
+
+        self.assertEqual(self.stave.events, [])
+
+    def test_right_drag_selects_notes_without_deleting_them(self) -> None:
+        self._add_note(60, 256)
+        self._add_note(64, 512)
+        start_mm = self._point(59, 192)
+        end_mm = self._point(61, 320)
+
+        self.canvas.mousePressEvent(self._mouse_event(
+            QEvent.Type.MouseButtonPress,
+            start_mm,
+            Qt.MouseButton.RightButton,
+            Qt.MouseButton.RightButton,
+        ))
+        self.canvas.mouseMoveEvent(self._mouse_event(
+            QEvent.Type.MouseMove,
+            end_mm,
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.RightButton,
+        ))
+        self.canvas.mouseReleaseEvent(self._mouse_event(
+            QEvent.Type.MouseButtonRelease,
+            end_mm,
+            Qt.MouseButton.RightButton,
+            Qt.MouseButton.NoButton,
+        ))
+
+        self.assertEqual(len(self.stave.events), 2)
+        self.assertEqual(self.canvas._selected_note_ids, {self.stave.events[0].id})
+
+    def test_right_click_clears_the_existing_selection(self) -> None:
+        self._add_note(60, 256)
+        self._add_note(64, 512)
+        self.canvas._selected_note_ids = {note.id for note in self.stave.events}
+        empty_point_mm = self._point(67, 768)
+
+        self.canvas.mousePressEvent(self._mouse_event(
+            QEvent.Type.MouseButtonPress,
+            empty_point_mm,
+            Qt.MouseButton.RightButton,
+            Qt.MouseButton.RightButton,
+        ))
+        self.canvas.mouseReleaseEvent(self._mouse_event(
+            QEvent.Type.MouseButtonRelease,
+            empty_point_mm,
+            Qt.MouseButton.RightButton,
+            Qt.MouseButton.NoButton,
+        ))
+
+        self.assertEqual([(note.time, note.pitch) for note in self.stave.events], [(256, 60), (512, 64)])
+        self.assertEqual(self.canvas._selected_note_ids, set())
 
     def test_inserting_a_note_clears_the_previous_selection(self) -> None:
         self._add_note(60, 256)

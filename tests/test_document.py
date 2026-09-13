@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 
@@ -328,6 +329,30 @@ class KeyTab2DocumentTests(unittest.TestCase):
         self.assertTrue(restored.layout.measure_numbering_font.italic)
         self.assertEqual(restored.layout.tempo_font.size_pt, 36.0)
         self.assertFalse(restored.layout.tempo_font.bold)
+
+    def test_loading_fills_missing_nested_model_defaults(self) -> None:
+        serialized = deepcopy(KeyTab2Document.new().to_dict())
+        serialized["layout"].pop("page_left_margin_mm")
+        serialized["pages"][0]["systems"][0]["staves"][0].pop("left_margin_mm")
+        serialized["pages"][0]["systems"][0]["staves"][0].pop("right_margin_mm")
+
+        restored = KeyTab2Document.from_dict(serialized)
+        stave = restored.pages[0].systems[0].staves[0]
+
+        self.assertEqual(restored.layout.page_left_margin_mm, Layout().page_left_margin_mm)
+        self.assertEqual(stave.left_margin_mm, 5.0)
+        self.assertEqual(stave.right_margin_mm, 5.0)
+
+    def test_loading_ignores_obsolete_system_margin_fields(self) -> None:
+        serialized = KeyTab2Document.new().to_dict()
+        serialized["pages"][0]["systems"][0].update(left_margin_mm=37.0, right_margin_mm=41.0)
+
+        restored = KeyTab2Document.from_dict(serialized)
+        system = restored.pages[0].systems[0]
+
+        self.assertFalse(hasattr(system, "left_margin_mm"))
+        self.assertEqual(system.staves[0].left_margin_mm, 5.0)
+        self.assertEqual(system.staves[0].right_margin_mm, 5.0)
 
     def test_rejects_non_native_extension(self) -> None:
         with self.assertRaises(ValueError):

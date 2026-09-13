@@ -67,6 +67,8 @@ class Stave:
     name: str = "Piano"
     pitch_range: list[int] = field(default_factory=lambda: [36, 84])
     scale: float = 1.0
+    left_margin_mm: float = 5.0
+    right_margin_mm: float = 5.0
     events: list[StaveEvent] = field(default_factory=list)
     id: str = field(default_factory=_new_id)
     revision: int = field(default=0, repr=False, compare=False)
@@ -154,8 +156,6 @@ class System:
     start_tick: int = 0
     end_tick: int = TIME_PER_QUARTER * 16
     first_measure_number: int = 1
-    left_margin_mm: float = 5.0
-    right_margin_mm: float = 5.0
     force_page_break_before: bool = False
     top_mm: float = field(default=10.0, repr=False, compare=False)
     height_mm: float = field(default=277.0, repr=False, compare=False)
@@ -266,8 +266,6 @@ class KeyTab2Document:
             start_tick=time,
             end_tick=system.end_tick,
             first_measure_number=system.first_measure_number + self._measure_count_before(system.start_tick, time),
-            left_margin_mm=system.left_margin_mm,
-            right_margin_mm=system.right_margin_mm,
             staves=following_staves,
             events=following_events,
         )
@@ -515,8 +513,10 @@ class KeyTab2Document:
 
     def _system_required_width_mm(self, system: System) -> float:
         stave_widths = [self._stave_required_width_mm(system, stave) for stave in system.staves]
-        group_width_mm = sum(stave_widths) + 12.0 * max(0, len(stave_widths) - 1)
-        return system.left_margin_mm + group_width_mm + system.right_margin_mm
+        return sum(
+            stave.left_margin_mm + stave_width_mm + stave.right_margin_mm
+            for stave, stave_width_mm in zip(system.staves, stave_widths, strict=True)
+        )
 
     def _stave_required_width_mm(self, system: System, stave: Stave) -> float:
         low_pitch, _ = stave.pitch_range
@@ -601,6 +601,7 @@ class KeyTab2Document:
         time_per_quarter = data.get("time_per_quarter", data.get("ticks_per_quarter"))
         if time_per_quarter != TIME_PER_QUARTER:
             raise ValueError("Unsupported time-per-quarter value")
+        data = cls._fill_missing_defaults(data, cls.new().to_dict())
 
         info_data = data.get("score_info", {})
         info = ScoreInfo(
@@ -667,6 +668,22 @@ class KeyTab2Document:
         document.repaginate_document()
         return document
 
+    @classmethod
+    def _fill_missing_defaults(cls, data: object, defaults: object) -> object:
+        """Recursively fill absent persisted model fields from current defaults."""
+        if isinstance(data, dict) and isinstance(defaults, dict):
+            filled = {
+                key: cls._fill_missing_defaults(value, defaults[key]) if key in defaults else value
+                for key, value in data.items()
+            }
+            for key, value in defaults.items():
+                if key not in filled and key not in {"id", "created_at", "modified_at"}:
+                    filled[key] = deepcopy(value)
+            return filled
+        if isinstance(data, list) and isinstance(defaults, list) and len(defaults) == 1:
+            return [cls._fill_missing_defaults(value, defaults[0]) for value in data]
+        return data
+
     @staticmethod
     def _page_from_dict(data: object) -> Page:
         if not isinstance(data, dict):
@@ -697,8 +714,6 @@ class KeyTab2Document:
             start_tick=start_tick,
             end_tick=end_tick,
             first_measure_number=int(data.get("first_measure_number", 1)),
-            left_margin_mm=float(data.get("left_margin_mm", 5.0)),
-            right_margin_mm=float(data.get("right_margin_mm", 5.0)),
             force_page_break_before=bool(data.get("force_page_break_before", False)),
             staves=[KeyTab2Document._stave_from_dict(stave_data) for stave_data in staves_data],
             events=KeyTab2Document._events_from_dict(data.get("events", [])),
@@ -726,6 +741,8 @@ class KeyTab2Document:
             name=str(data.get("name", "Piano")),
             pitch_range=[low_pitch, high_pitch],
             scale=scale,
+            left_margin_mm=float(data.get("left_margin_mm", 5.0)),
+            right_margin_mm=float(data.get("right_margin_mm", 5.0)),
             events=events,
             id=str(data.get("id", _new_id())),
         )

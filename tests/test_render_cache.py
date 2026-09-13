@@ -707,7 +707,7 @@ class RenderCacheTests(unittest.TestCase):
         self.assertTrue(following.force_page_break_before)
         self.assertEqual([len(page.systems) for page in document.pages], [1, 1])
 
-    def test_permanent_stave_control_is_centred_on_stave_width(self) -> None:
+    def test_hovered_stave_control_is_centred_on_stave_width(self) -> None:
         app = QApplication.instance() or QApplication([])
         del app
         document = KeyTab2Document.new()
@@ -728,7 +728,12 @@ class RenderCacheTests(unittest.TestCase):
         self.assertEqual(target[0].id, system.id)
         self.assertEqual(target[1].id, stave.id)
 
-    def test_pdf_export_excludes_permanent_stave_controls(self) -> None:
+        canvas.update_mouse_cursor(QPointF(0.0, 0.0))
+        self.assertIsNone(canvas._hovered_stave_control_target())
+        canvas.update_mouse_cursor(QPointF(centre_x_mm, centre_y_mm))
+        self.assertIsNotNone(canvas._hovered_stave_control_target())
+
+    def test_pdf_export_excludes_hovered_stave_controls(self) -> None:
         document = KeyTab2Document.new()
         canvas = PaperCanvas(document)
 

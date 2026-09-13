@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import cairocffi as cairo
+from typing import Literal
 
 from PySide6.QtCore import QPointF, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QImage, QMouseEvent, QPainter, QPen, QPixmap
@@ -189,9 +190,17 @@ class StavesDialog(QDialog):
         self.setWindowTitle("Staves")
         self.setMinimumSize(420, 340)
         self._staves = [
-            Stave(name=stave.name, pitch_range=list(stave.pitch_range), scale=stave.scale, id=stave.id)
+            Stave(
+                name=stave.name,
+                pitch_range=list(stave.pitch_range),
+                scale=stave.scale,
+                left_margin_mm=stave.left_margin_mm,
+                right_margin_mm=stave.right_margin_mm,
+                id=stave.id,
+            )
             for stave in staves
         ]
+        self.edited_fields_by_id: dict[str, set[str]] = {}
         self._list = QListWidget(self)
         self._list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
@@ -206,6 +215,10 @@ class StavesDialog(QDialog):
         self._range_button.clicked.connect(self._edit_range)
         self._scale_button = QPushButton("Set Stave Scale", self)
         self._scale_button.clicked.connect(self._edit_scale)
+        self._left_margin_button = QPushButton("Set Stave Margin Left", self)
+        self._left_margin_button.clicked.connect(lambda: self._edit_margin("left"))
+        self._right_margin_button = QPushButton("Set Stave Margin Right", self)
+        self._right_margin_button.clicked.connect(lambda: self._edit_margin("right"))
 
         list_controls = QHBoxLayout()
         list_controls.addWidget(self._list, 1)
@@ -221,6 +234,8 @@ class StavesDialog(QDialog):
         layout.addWidget(self._name_button, alignment=Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(self._range_button, alignment=Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(self._scale_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(self._left_margin_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(self._right_margin_button, alignment=Qt.AlignmentFlag.AlignLeft)
         dialog_buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
         dialog_buttons.accepted.connect(self.accept)
         dialog_buttons.rejected.connect(self.reject)
@@ -296,6 +311,7 @@ class StavesDialog(QDialog):
         dialog = StaveRangeDialog(stave, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             stave.pitch_range = dialog.pitch_range
+            self._mark_edited(stave, "pitch_range")
             self._refresh_list(self._list.currentRow())
 
     def _edit_name(self) -> None:
@@ -305,6 +321,7 @@ class StavesDialog(QDialog):
         name, accepted = QInputDialog.getText(self, "Set Stave Name", "Stave name:", text=stave.name)
         if accepted and name.strip():
             stave.name = name.strip()
+            self._mark_edited(stave, "name")
             self._refresh_list(self._list.currentRow())
 
     def _edit_scale(self) -> None:
@@ -322,10 +339,34 @@ class StavesDialog(QDialog):
         )
         if accepted:
             stave.scale = scale
+            self._mark_edited(stave, "scale")
+
+    def _edit_margin(self, side: Literal["left", "right"]) -> None:
+        stave = self._selected_stave()
+        if stave is None:
+            return
+        attribute = f"{side}_margin_mm"
+        margin_mm, accepted = QInputDialog.getDouble(
+            self,
+            f"Set Stave Margin {side.title()}",
+            f"Stave margin {side} (mm):",
+            getattr(stave, attribute),
+            0.0,
+            100.0,
+            2,
+        )
+        if accepted:
+            setattr(stave, attribute, margin_mm)
+            self._mark_edited(stave, attribute)
+
+    def _mark_edited(self, stave: Stave, field_name: str) -> None:
+        self.edited_fields_by_id.setdefault(stave.id, set()).add(field_name)
 
     def _update_controls(self) -> None:
         has_selection = self._selected_stave() is not None
         self._name_button.setEnabled(has_selection)
         self._range_button.setEnabled(has_selection)
         self._scale_button.setEnabled(has_selection)
+        self._left_margin_button.setEnabled(has_selection)
+        self._right_margin_button.setEnabled(has_selection)
         self._remove_button.setEnabled(len(self._staves) > 1 and has_selection)
