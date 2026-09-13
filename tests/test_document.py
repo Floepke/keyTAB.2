@@ -295,6 +295,33 @@ class KeyTab2DocumentTests(unittest.TestCase):
         self.assertEqual(restored_note.pitch, 60)
         self.assertEqual(restored.pages[0].systems[0].staves[0].scale, 0.75)
 
+    def test_loading_regenerates_duplicate_event_ids(self) -> None:
+        document = KeyTab2Document.new()
+        system = document.pages[0].systems[0]
+        original = NoteEvent(time=256, duration=128, pitch=60)
+        duplicate = NoteEvent(id=original.id, time=512, duration=128, pitch=64)
+        system.staves[0].events.extend((original, duplicate))
+
+        restored = KeyTab2Document.from_dict(document.to_dict())
+        restored_events = restored.pages[0].systems[0].staves[0].events
+
+        self.assertEqual(restored_events[0].id, original.id)
+        self.assertNotEqual(restored_events[1].id, original.id)
+        self.assertEqual(len({event.id for event in restored_events}), 2)
+
+    def test_loading_separates_unlinked_copied_continuation_ids(self) -> None:
+        document = KeyTab2Document.new()
+        system = document.pages[0].systems[0]
+        original = NoteEvent(time=256, duration=128, pitch=60)
+        copied = NoteEvent(time=512, duration=128, pitch=60, continuation_id=original.id)
+        original.continuation_id = original.id
+        system.staves[0].events.extend((original, copied))
+
+        restored = KeyTab2Document.from_dict(document.to_dict())
+        restored_events = restored.pages[0].systems[0].staves[0].events
+
+        self.assertEqual([note.continuation_id for note in restored_events], [note.id for note in restored_events])
+
     def test_document_serializes_systems_not_lines(self) -> None:
         page_data = KeyTab2Document.new().to_dict()["pages"][0]
 

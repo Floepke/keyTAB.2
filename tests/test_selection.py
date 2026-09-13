@@ -274,6 +274,21 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual([(note.time, note.pitch) for note in self.stave.events], [(512, 60), (640, 64)])
         self.assertTrue(original_ids.isdisjoint({note.id for note in self.stave.events}))
 
+    def test_paste_remaps_continuation_ids_before_right_click_deletion(self) -> None:
+        self._add_note(60, 256)
+        original = self.stave.events[0]
+        original.continuation_id = original.id
+        self.canvas._selected_note_ids = {original.id}
+
+        self.assertTrue(self.canvas.copy_selection())
+        self.canvas.update_mouse_cursor(self._point(60, 512))
+        self.assertTrue(self.canvas.paste_selection())
+
+        pasted = next(note for note in self.stave.events if note.time == 512)
+        self.assertNotEqual(pasted.continuation_id, original.continuation_id)
+        self.assertTrue(self.tool.on_right_click(self._point(60, 512)))
+        self.assertEqual(self.stave.events, [original])
+
     def test_spacebar_requests_playback_from_the_mouse_time(self) -> None:
         requested_ticks: list[int] = []
         self.canvas.playback_toggle_requested.connect(requested_ticks.append)

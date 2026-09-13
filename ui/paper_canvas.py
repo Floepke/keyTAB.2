@@ -1280,14 +1280,25 @@ class PaperCanvas(QWidget):
         if (not self._clipboard_notes and not self._clipboard_slurs) or self._mouse_stave_target is None or self.mouse_time is None:
             return False
         system, stave, _ = self._mouse_stave_target
-        source_time = min(
-            *(note.time for note in self._clipboard_notes),
-            *(tick for slur in self._clipboard_slurs for tick in (slur.y1_tick, slur.y2_tick, slur.y3_tick, slur.y4_tick)),
+        source_times = [note.time for note in self._clipboard_notes]
+        source_times.extend(
+            tick
+            for slur in self._clipboard_slurs
+            for tick in (slur.y1_tick, slur.y2_tick, slur.y3_tick, slur.y4_tick)
         )
+        source_time = min(source_times)
         pasted = [deepcopy(note) for note in self._clipboard_notes]
         pasted_slurs = [deepcopy(slur) for slur in self._clipboard_slurs]
+        continuation_ids = {
+            note.continuation_id
+            for note in pasted
+            if note.continuation_id is not None
+        }
+        continuation_id_map = {continuation_id: str(uuid4()) for continuation_id in continuation_ids}
         for note in pasted:
             note.id = str(uuid4())
+            if note.continuation_id is not None:
+                note.continuation_id = continuation_id_map[note.continuation_id]
             note.time += self.mouse_time - source_time
             if note.time < system.start_tick or note.time + note.duration > system.end_tick or not NoteTool._can_place(stave, note):
                 return False

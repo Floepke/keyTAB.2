@@ -665,8 +665,48 @@ class KeyTab2Document:
             created_at=str(data.get("created_at", _timestamp())),
             modified_at=str(data.get("modified_at", _timestamp())),
         )
+        document._ensure_unique_event_ids()
+        document._repair_unlinked_continuation_ids()
         document.repaginate_document()
         return document
+
+    def _ensure_unique_event_ids(self) -> None:
+        """Regenerate colliding event IDs from documents saved by older releases."""
+        used_ids: set[str] = set()
+        for page in self.pages:
+            for event in page.events:
+                self._ensure_unique_event_id(event, used_ids)
+            for system in page.systems:
+                for event in system.events:
+                    self._ensure_unique_event_id(event, used_ids)
+                for stave in system.staves:
+                    for event in stave.events:
+                        self._ensure_unique_event_id(event, used_ids)
+        for event in self.timeline_events:
+            self._ensure_unique_event_id(event, used_ids)
+
+    @staticmethod
+    def _ensure_unique_event_id(event: Event, used_ids: set[str]) -> None:
+        event_id = event.id
+        if not event_id or event_id in used_ids:
+            event.id = _new_id()
+            while event.id in used_ids:
+                event.id = _new_id()
+        used_ids.add(event.id)
+
+    def _repair_unlinked_continuation_ids(self) -> None:
+        """Separate copied notes that inherited a continuation link without segments."""
+        groups: dict[str, list[NoteEvent]] = {}
+        for page in self.pages:
+            for system in page.systems:
+                for stave in system.staves:
+                    for event in stave.events:
+                        if isinstance(event, NoteEvent) and event.continuation_id is not None:
+                            groups.setdefault(event.continuation_id, []).append(event)
+        for notes in groups.values():
+            if len(notes) > 1 and all(not note.continues_from_previous and not note.continues_to_next for note in notes):
+                for note in notes:
+                    note.continuation_id = note.id
 
     @classmethod
     def _fill_missing_defaults(cls, data: object, defaults: object) -> object:
