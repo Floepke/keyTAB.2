@@ -8,14 +8,15 @@ from ui.render_cache import NoteGeometry
 
 class NoteDrawer(DrawerBase):
     def draw(self, note: NoteGeometry, dot_diameter_mm: float, *, show_body: bool, show_head: bool, show_stem: bool, show_stop: bool, show_continuation_dots: bool) -> None:
+        notehead_tag = "note_head_black" if note.head.filled else "note_head_white"
         if show_body:
             self.draw_poly_line(note.body_points_mm, width_mm=0.0, fill_color=note.body_color, closed=True, tags=("midi_body",))
         if show_head and not note.continues_from_previous:
             if note.head.form == "cross":
-                self.draw_line(*note.head.points_mm[0], *note.head.points_mm[1], width_mm=note.head_outline_width_mm, tags=("note_head",))
-                self.draw_line(*note.head.points_mm[3], *note.head.points_mm[4], width_mm=note.head_outline_width_mm, tags=("note_head",))
+                self.draw_line(*note.head.points_mm[0], *note.head.points_mm[1], width_mm=note.head_outline_width_mm, tags=(notehead_tag,))
+                self.draw_line(*note.head.points_mm[3], *note.head.points_mm[4], width_mm=note.head_outline_width_mm, tags=(notehead_tag,))
             else:
-                self.draw_poly_line(note.head.points_mm, width_mm=note.head_outline_width_mm, fill_color=self.ink_color if note.head.filled else (0.99, 0.98, 0.95), closed=True, tags=("note_head",))
+                self.draw_poly_line(note.head.points_mm, width_mm=note.head_outline_width_mm, fill_color=self.ink_color if note.head.filled else (0.99, 0.98, 0.95), closed=True, tags=(notehead_tag,))
         if show_stem and note.stem[0] != note.stem[2]:
             self.draw_line(*note.stem, width_mm=note.stem_width_mm, tags=("note_stem",))
         if show_stem and note.chord_connector is not None:

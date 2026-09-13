@@ -109,6 +109,11 @@ class Layout:
         bold=True,
         italic=False,
     ))
+    tempo_font: Font = field(default_factory=lambda: Font(
+        family="Edwin",
+        size_pt=35.0,
+        bold=True,
+    ))
 
     font_text: Font = field(default_factory=lambda: Font(
         family="Edwin",

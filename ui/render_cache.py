@@ -131,6 +131,20 @@ class MeasureCollisionIndex:
     def left_extent_mm(self, start_tick: int, end_tick: int, default_mm: float) -> float:
         return min((geometry.bounds_mm[0] for geometry in self._geometries.intersecting(start_tick, end_tick)), default=default_mm)
 
+    def beam_right_extent_in_rect(self, left_mm: float, top_mm: float, right_mm: float, bottom_mm: float) -> float | None:
+        """Return the right edge of beams that overlap an annotation rectangle."""
+        overlapping = [
+            beam.right_extent_mm
+            for beam in self._geometries.geometries
+            if isinstance(beam, BeamGeometry)
+            and beam.bounds_mm[0] <= right_mm
+            and beam.bounds_mm[2] >= left_mm
+            and beam.bounds_mm[1] <= bottom_mm
+            and beam.bounds_mm[3] >= top_mm
+            and _beam_overlaps_rect(beam, left_mm, top_mm, right_mm, bottom_mm)
+        ]
+        return max(overlapping, default=None)
+
     def horizontal_occlusion_intervals(self, y_mm: float, padding_mm: float = 0.0) -> tuple[tuple[float, float], ...]:
         """Return merged x intervals occupied by rendered notation at one y."""
         intervals: list[tuple[float, float]] = []
@@ -320,6 +334,7 @@ def build_stave_render_data(
         markers_by_hand[hand].append((beam.time, beam.time + beam.duration, beam.id))
 
     beam_geometries: list[BeamGeometry] = []
+    notes_by_id = {note.id: note for note in notes}
     for hand in ("left", "right"):
         overrides = [(start, end) for start, end, _ in markers_by_hand[hand]]
         marker_ids = {(start, end): event_id for start, end, event_id in markers_by_hand[hand]}
@@ -334,7 +349,8 @@ def build_stave_render_data(
                 continue
             continuation_members = [
                 geometry
-                for note, geometry in zip(notes, geometries, strict=True)
+                for geometry in geometries
+                for note in (notes_by_id[geometry.event_id],)
                 if geometry.hand == hand
                 and geometry.event_id not in chord_interior_ids
                 and note.time < window_start < note.time + note.duration
@@ -402,6 +418,56 @@ def _line_interval_at_y(line: tuple[float, float, float, float], y_mm: float, wi
     if min(y1_mm, y2_mm) - half_width_mm <= y_mm <= max(y1_mm, y2_mm) + half_width_mm:
         return min(x1_mm, x2_mm) - half_width_mm, max(x1_mm, x2_mm) + half_width_mm
     return None
+
+
+def _beam_overlaps_rect(beam: BeamGeometry, left_mm: float, top_mm: float, right_mm: float, bottom_mm: float) -> bool:
+    rectangle = ((left_mm, top_mm), (right_mm, top_mm), (right_mm, bottom_mm), (left_mm, bottom_mm))
+    if any(_point_in_rect(point, left_mm, top_mm, right_mm, bottom_mm) for point in beam.polygon_mm):
+        return True
+    if any(_point_in_polygon(x_mm, y_mm, beam.polygon_mm) for x_mm, y_mm in rectangle):
+        return True
+    polygon_edges = zip(beam.polygon_mm, (*beam.polygon_mm[1:], beam.polygon_mm[0]), strict=True)
+    rectangle_edges = zip(rectangle, (*rectangle[1:], rectangle[0]), strict=True)
+    if any(_segments_intersect(first, second, third, fourth) for first, second in polygon_edges for third, fourth in rectangle_edges):
+        return True
+    half_width_mm = beam.connector_width_mm * 0.5
+    return any(
+        _segment_intersects_rect(
+            (x1_mm, y1_mm, x2_mm, y2_mm),
+            left_mm - half_width_mm,
+            top_mm - half_width_mm,
+            right_mm + half_width_mm,
+            bottom_mm + half_width_mm,
+        )
+        for x1_mm, y1_mm, x2_mm, y2_mm in beam.segments_mm
+    )
+
+
+def _point_in_rect(point: tuple[float, float], left_mm: float, top_mm: float, right_mm: float, bottom_mm: float) -> bool:
+    x_mm, y_mm = point
+    return left_mm <= x_mm <= right_mm and top_mm <= y_mm <= bottom_mm
+
+
+def _segment_intersects_rect(line: tuple[float, float, float, float], left_mm: float, top_mm: float, right_mm: float, bottom_mm: float) -> bool:
+    x1_mm, y1_mm, x2_mm, y2_mm = line
+    if _point_in_rect((x1_mm, y1_mm), left_mm, top_mm, right_mm, bottom_mm) or _point_in_rect((x2_mm, y2_mm), left_mm, top_mm, right_mm, bottom_mm):
+        return True
+    rectangle = ((left_mm, top_mm), (right_mm, top_mm), (right_mm, bottom_mm), (left_mm, bottom_mm))
+    return any(
+        _segments_intersect((x1_mm, y1_mm), (x2_mm, y2_mm), start, end)
+        for start, end in zip(rectangle, (*rectangle[1:], rectangle[0]), strict=True)
+    )
+
+
+def _segments_intersect(first_start: tuple[float, float], first_end: tuple[float, float], second_start: tuple[float, float], second_end: tuple[float, float]) -> bool:
+    def orientation(start: tuple[float, float], end: tuple[float, float], point: tuple[float, float]) -> float:
+        return (end[0] - start[0]) * (point[1] - start[1]) - (end[1] - start[1]) * (point[0] - start[0])
+
+    first_start_side = orientation(second_start, second_end, first_start)
+    first_end_side = orientation(second_start, second_end, first_end)
+    second_start_side = orientation(first_start, first_end, second_start)
+    second_end_side = orientation(first_start, first_end, second_end)
+    return first_start_side * first_end_side <= 0.0 and second_start_side * second_end_side <= 0.0
 
 
 def _point_in_polygon(x_mm: float, y_mm: float, points: tuple[tuple[float, float], ...]) -> bool:

@@ -9,18 +9,20 @@ from dataclasses import asdict, replace
 import json
 import math
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QCursor, QImage, QKeySequence, QPainter, QPainterPath, QPalette, QPen, QPolygonF
 from PySide6.QtWidgets import QInputDialog, QMenu, QWidget
 
-from keytab2_model import KeyTab2Document, NoteEvent, SlurEvent, Stave
+from keytab2_model import KeyTab2Document, NoteEvent, SlurEvent, Stave, TempoEvent
 from keytab2_model.base_grid import grid_boundaries, grid_line_boundaries
 from ui.drawers.grid_drawer import GridDrawer
 from ui.drawers.beam_drawer import BeamDrawer
 from ui.drawers.note_drawer import NoteDrawer
 from ui.drawers.slur_drawer import SlurDrawer
+from ui.drawers.tempo_drawer import TempoDrawer
 from ui.drawers.metrics import SystemMetrics
 from ui.drawers.base import DrawCommandBuffer, DrawerBase
 from ui.drawers.snap_drawer import SnapDrawer
@@ -29,7 +31,7 @@ from ui.drawers.stave_connector_drawer import StaveConnectorDrawer
 from ui.drawers.time_signature_drawer import TimeSignatureDrawer
 from ui.dialogs.stave_dialogs import StaveRangeDialog, StavesDialog
 from ui.render_cache import NoteGeometry, StaveRenderData, build_stave_render_data
-from ui.tools import NoteTool, SlurTool, SystemBreakTool, TimeSignatureTool, ToolManager
+from ui.tools import NoteTool, SlurTool, SystemBreakTool, TempoTool, TimeSignatureTool, ToolManager
 from utils.CONSTANT import SHORTEST_DURATION, SLUR_SEGMENT_COUNT
 from utils.operator import Operator
 
@@ -39,6 +41,7 @@ class PaperCanvas(QWidget):
 
     note_hand_changed = Signal(str)
     note_audition_requested = Signal(int, int)
+    playback_toggle_requested = Signal(int)
 
     BASE_PIXELS_PER_MM = 3.0
     MIN_ZOOM = 0.25
@@ -79,10 +82,12 @@ class PaperCanvas(QWidget):
         self._note_tool = NoteTool()
         self._slur_tool = SlurTool()
         self._system_break_tool = SystemBreakTool()
+        self._tempo_tool = TempoTool()
         self._time_signature_tool = TimeSignatureTool()
         self._tool_manager.register(self._note_tool)
         self._tool_manager.register(self._slur_tool)
         self._tool_manager.register(self._system_break_tool)
+        self._tool_manager.register(self._tempo_tool)
         self._tool_manager.register(self._time_signature_tool)
         self._tool_manager.activate(self._note_tool.TOOL_NAME)
         self._left_tool_active = False
@@ -91,6 +96,7 @@ class PaperCanvas(QWidget):
         self.mouse_pitch: int | None = None
         self._last_mouse_position_mm: QPointF | None = None
         self._mouse_stave_target = None
+        self._playback_tick: int | None = None
         self.setAutoFillBackground(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
@@ -359,12 +365,13 @@ class PaperCanvas(QWidget):
         note_drawer = NoteDrawer(context, self.INK_COLOR, command_buffer)
         beam_drawer = BeamDrawer(context, self.INK_COLOR, command_buffer)
         slur_drawer = SlurDrawer(context, self.INK_COLOR, command_buffer)
+        tempo_drawer = TempoDrawer(context, self.INK_COLOR, command_buffer)
         culling_metrics = SystemMetrics.from_layout(layout, max(stave.scale for system in page.systems for stave in system.staves))
         final_system = self._document.pages[-1].systems[-1]
         for system in page.systems:
             if not self._system_intersects_render_region(page, system, visible_left_mm, visible_right_mm, visible_top_mm, visible_bottom_mm, include_editor_controls):
                 continue
-            self._draw_system(grid_drawer, snap_drawer, stave_drawer, stave_connector_drawer, time_signature_drawer, note_drawer, beam_drawer, slur_drawer, page, system, self._system_column_bounds(page, system), visible_top_mm, visible_bottom_mm, include_snap_bands, include_midi_only_ledgers, include_editor_controls, system is final_system, slur_segment_count)
+            self._draw_system(grid_drawer, snap_drawer, stave_drawer, stave_connector_drawer, time_signature_drawer, note_drawer, beam_drawer, slur_drawer, tempo_drawer, page, system, self._system_column_bounds(page, system), visible_top_mm, visible_bottom_mm, include_snap_bands, include_midi_only_ledgers, include_editor_controls, system is final_system, slur_segment_count)
         command_buffer.flush()
 
     def _draw_page_metadata(
@@ -442,7 +449,7 @@ class PaperCanvas(QWidget):
             and system_top_mm <= visible_bottom_mm
         )
 
-    def _draw_system(self, grid_drawer: GridDrawer, snap_drawer: SnapDrawer, stave_drawer: StaveDrawer, stave_connector_drawer: StaveConnectorDrawer, time_signature_drawer: TimeSignatureDrawer, note_drawer: NoteDrawer, beam_drawer: BeamDrawer, slur_drawer: SlurDrawer, page, system, column_bounds: tuple[float, float], visible_top_mm: float, visible_bottom_mm: float, include_snap_bands: bool, include_midi_only_ledgers: bool, include_editor_controls: bool, is_final_system: bool, slur_segment_count: int) -> None:
+    def _draw_system(self, grid_drawer: GridDrawer, snap_drawer: SnapDrawer, stave_drawer: StaveDrawer, stave_connector_drawer: StaveConnectorDrawer, time_signature_drawer: TimeSignatureDrawer, note_drawer: NoteDrawer, beam_drawer: BeamDrawer, slur_drawer: SlurDrawer, tempo_drawer: TempoDrawer, page, system, column_bounds: tuple[float, float], visible_top_mm: float, visible_bottom_mm: float, include_snap_bands: bool, include_midi_only_ledgers: bool, include_editor_controls: bool, is_final_system: bool, slur_segment_count: int) -> None:
         stave_left_positions = self._centered_stave_left_positions(system, stave_drawer, self._document.layout, *column_bounds)
         natural_stave_bounds = [
             stave_drawer.bounds(stave, self._document.layout, left_mm)
@@ -450,6 +457,7 @@ class PaperCanvas(QWidget):
         ]
         measure_starts, _ = grid_boundaries(self._document.base_grid, self._document.time_per_quarter)
         metrics = [SystemMetrics.from_layout(self._document.layout, stave.scale) for stave in system.staves]
+        measure_number_right_edges: dict[int, float] = {}
         if all(bounds is not None for bounds in natural_stave_bounds):
             stave_connector_drawer.draw(
                 system,
@@ -490,7 +498,22 @@ class PaperCanvas(QWidget):
             grid_starts = grid_line_boundaries(self._document.base_grid, self._document.time_per_quarter)
             if include_snap_bands:
                 snap_drawer.draw(system, *stave_natural_bounds, self.input_snap_ticks, measure_starts)
-            grid_drawer.draw(system, self._document.layout, stave.scale, *stave_natural_bounds, measure_starts, grid_starts, metric, render_data.collision_index, is_final_system, stave_index == len(system.staves) - 1)
+            is_last_stave = stave_index == len(system.staves) - 1
+            grid_drawer.draw(system, self._document.layout, stave.scale, *stave_natural_bounds, measure_starts, grid_starts, metric, render_data.collision_index, is_final_system, is_last_stave, measure_number_right_edges if is_last_stave else None)
+            if is_last_stave and self._document.layout.tempo_indicator_visible:
+                for tempo in (event for event in self._document.timeline_events if isinstance(event, TempoEvent) and system.start_tick <= event.start_tick < system.end_tick):
+                    top_start_x_mm = stave_natural_bounds[1]
+                    text_left_x_mm, start_y_mm = self._tempo_marker_position(system, top_start_x_mm, tempo)
+                    text_left_x_mm = max(text_left_x_mm, measure_number_right_edges.get(tempo.start_tick, text_left_x_mm - 1.0) + 1.0)
+                    tempo_drawer.draw(
+                        tempo,
+                        top_start_x_mm,
+                        text_left_x_mm,
+                        start_y_mm,
+                        self._time_to_y_mm(system, min(system.end_tick, tempo.start_tick + tempo.duration_ticks)),
+                        self._document.layout.engraving_pt_to_mm(self._document.layout.tempo_font.size_pt, stave.scale),
+                        self._document.layout.tempo_font,
+                    )
             if include_editor_controls and is_final_system and stave_index == len(system.staves) - 1:
                 self._draw_add_measure_control(grid_drawer, system, column_bounds)
             stave_drawer.draw(
@@ -639,6 +662,7 @@ class PaperCanvas(QWidget):
 
     def _draw_interaction_overlay(self, painter: QPainter, exposed_rect: QRect) -> None:
         """Draw ephemeral selection state; this pass is never exported."""
+        self._draw_playhead(painter)
         self._draw_selection_overlay(painter, exposed_rect)
         if self._tool_manager.active_tool is self._system_break_tool:
             highlight = self._system_break_highlight_geometry()
@@ -717,6 +741,36 @@ class PaperCanvas(QWidget):
                     painter.drawEllipse(QPointF(x_mm * self.pixels_per_mm, y_mm * self.pixels_per_mm), radius_px, radius_px)
         finally:
             painter.restore()
+
+    def set_playback_tick(self, tick: int | None) -> None:
+        if tick == self._playback_tick:
+            return
+        self._playback_tick = tick
+        self.update()
+
+    def _draw_playhead(self, painter: QPainter) -> None:
+        if self._playback_tick is None:
+            return
+        system = next(
+            (
+                candidate for candidate in self._current_page().systems
+                if candidate.start_tick <= self._playback_tick <= candidate.end_tick
+            ),
+            None,
+        )
+        if system is None:
+            return
+        left_mm, right_mm = self._system_column_bounds(self._current_page(), system)
+        y_mm = self._time_to_y_mm(system, self._playback_tick)
+        painter.save()
+        painter.setPen(QPen(QColor("#d9480f"), max(2, round(self.pixels_per_mm * 0.7))))
+        painter.drawLine(
+            round(left_mm * self.pixels_per_mm),
+            round(y_mm * self.pixels_per_mm),
+            round(right_mm * self.pixels_per_mm),
+            round(y_mm * self.pixels_per_mm),
+        )
+        painter.restore()
 
     def _draw_slur_handle_overlay(self, painter: QPainter, exposed_rect: QRect) -> None:
         """Draw the four direct-manipulation handles for each editable slur."""
@@ -1028,6 +1082,10 @@ class PaperCanvas(QWidget):
                 window.close()
                 event.accept()
                 return
+        if event.key() == Qt.Key.Key_Space and event.modifiers() == Qt.KeyboardModifier.NoModifier:
+            self.playback_toggle_requested.emit(int(self.mouse_time or 0))
+            event.accept()
+            return
         active_tool = self._tool_manager.active_tool
         if active_tool is not None and active_tool.on_key_press(event):
             event.accept()
@@ -1339,6 +1397,36 @@ class PaperCanvas(QWidget):
                     return "grid", time
         return None
 
+    def _tempo_marker_position(self, system, right_outer_stave_x_mm: float, tempo: TempoEvent) -> tuple[float, float]:
+        return (
+            right_outer_stave_x_mm + tempo.x_offset_mm,
+            self._time_to_y_mm(system, tempo.start_tick),
+        )
+
+    def tempo_target_at(self, point_mm: QPointF) -> TempoEvent | None:
+        page = self._current_page()
+        for system in page.systems:
+            if not system.staves:
+                continue
+            last_stave = system.staves[-1]
+            last_left_mm = self.stave_left_mm(system, last_stave)
+            bounds = StaveDrawer(None, self.INK_COLOR).bounds(last_stave, self._document.layout, last_left_mm)
+            if bounds is None:
+                continue
+            right_outer_stave_x_mm = bounds[1]
+            size_mm = self._document.layout.engraving_pt_to_mm(self._document.layout.tempo_font.size_pt, last_stave.scale)
+            for tempo in (event for event in self._document.timeline_events if isinstance(event, TempoEvent)):
+                if not system.start_tick <= tempo.start_tick < system.end_tick:
+                    continue
+                text_left_x_mm, start_y_mm = self._tempo_marker_position(system, right_outer_stave_x_mm, tempo)
+                end_y_mm = self._time_to_y_mm(system, min(system.end_tick, tempo.start_tick + tempo.duration_ticks))
+                if (
+                    right_outer_stave_x_mm - size_mm <= point_mm.x() <= text_left_x_mm + size_mm * 4.0
+                    and start_y_mm - size_mm <= point_mm.y() <= end_y_mm + size_mm
+                ):
+                    return tempo
+        return None
+
     def _time_signature_hovered_measure(self):
         """Return the meter details for the measure selected by a hovered barline."""
         if self._last_mouse_position_mm is None:
@@ -1475,6 +1563,10 @@ class PaperCanvas(QWidget):
         self._tool_manager.activate(TimeSignatureTool.TOOL_NAME)
         self.update()
 
+    def select_tempo_mode(self) -> None:
+        self._tool_manager.activate(TempoTool.TOOL_NAME)
+        self.update()
+
     def select_slur_mode(self, hand: str = "left") -> None:
         slur_tool = self._tool_manager.activate(SlurTool.TOOL_NAME)
         if not isinstance(slur_tool, SlurTool):
@@ -1506,9 +1598,17 @@ class PaperCanvas(QWidget):
         """Return the system, stave, and stave origin under one paper point."""
         page = self._current_page()
         drawer = StaveDrawer(None, self.INK_COLOR)
-        for system in page.systems:
-            if not system.top_mm <= point_mm.y() <= system.top_mm + system.height_mm:
-                continue
+        systems_at_y = [
+            system for system in page.systems
+            if system.top_mm <= point_mm.y() <= system.top_mm + system.height_mm
+        ]
+        systems_at_y.sort(
+            key=lambda system: (
+                not self._system_column_bounds(page, system)[0] <= point_mm.x() <= self._system_column_bounds(page, system)[1],
+                min(abs(point_mm.x() - self._system_column_bounds(page, system)[0]), abs(point_mm.x() - self._system_column_bounds(page, system)[1])),
+            )
+        )
+        for system in systems_at_y:
             positions = self._centered_stave_left_positions(system, drawer, self._document.layout, *self._system_column_bounds(page, system))
             for stave, left_mm in zip(system.staves, positions, strict=True):
                 if include_ledger_bounds:
@@ -1632,13 +1732,19 @@ class PaperCanvas(QWidget):
         menu = QMenu(self)
         staves_action = QAction("Configure Staves...", menu)
         scale_action = QAction("Set Stave Scale", menu)
+        left_margin_action = QAction("Set Stave Margin Left", menu)
+        right_margin_action = QAction("Set Stave Margin Right", menu)
         range_action = QAction("Set Stave Range", menu)
         staves_action.triggered.connect(self._configure_staves)
         scale_action.triggered.connect(self._set_stave_scale)
+        left_margin_action.triggered.connect(self._set_stave_margin_left)
+        right_margin_action.triggered.connect(self._set_stave_margin_right)
         range_action.triggered.connect(self._set_stave_range)
         menu.addAction(staves_action)
         menu.addSeparator()
         menu.addAction(scale_action)
+        menu.addAction(left_margin_action)
+        menu.addAction(right_margin_action)
         menu.addAction(range_action)
         menu.exec(position or QCursor.pos())
 
@@ -1663,6 +1769,43 @@ class PaperCanvas(QWidget):
         system.touch()
         self._document.repaginate_document()
         self.invalidate_render_cache(stave.id)
+        self._page_index = min(self._page_index, self.page_count - 1)
+        self._update_size()
+        self.commit_document_change()
+
+    def _set_stave_margin_left(self) -> None:
+        self._set_stave_margin("left")
+
+    def _set_stave_margin_right(self) -> None:
+        self._set_stave_margin("right")
+
+    def _set_stave_margin(self, side: Literal["left", "right"]) -> None:
+        target = self._control_target
+        system = self._system_by_id(target[0]) if target is not None else None
+        if system is None:
+            return
+        attribute = f"{side}_margin_mm"
+        margin_mm, accepted = QInputDialog.getDouble(
+            self,
+            f"Set Stave Margin {side.title()}",
+            f"Stave margin {side} (mm)",
+            getattr(system, attribute),
+            0.0,
+            100.0,
+            2,
+        )
+        if accepted:
+            self._apply_stave_margin(system, side, margin_mm)
+
+    def _apply_stave_margin(self, system, side: Literal["left", "right"], margin_mm: float) -> None:
+        """Apply a margin around one system's fixed-width stave group."""
+        if system not in self._current_page().systems:
+            raise ValueError("System does not belong to the current page")
+        setattr(system, f"{side}_margin_mm", margin_mm)
+        system.touch()
+        self._page_system_bounds_cache.clear()
+        self._document.repaginate_document()
+        self.invalidate_render_cache()
         self._page_index = min(self._page_index, self.page_count - 1)
         self._update_size()
         self.commit_document_change()

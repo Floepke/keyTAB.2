@@ -40,7 +40,7 @@ FIELD_GROUPS = {
     "Symbols": ("pedal_symbol_thickness_mm", "pedal_background_padding_mm", "text_background_padding_mm", "slur_width_sides_mm", "slur_width_middle_mm", "hairpin_line_width_mm", "hairpin_width_mm", "dynamic_symbol_font_size_pt", "dynamic_symbol_background_padding_mm", "dynamic_rotation", "countline_dash_pattern", "countline_thickness_mm"),
     "Grid": ("measure_grouping", "grid_band_track", "grid_barline_thickness_mm", "grid_gridline_thickness_mm", "grid_gridline_dash_pattern_mm", "grid_band_color", "grid_band_start_phase", "time_signature_indicator_type", "time_signature_indicator_lane_width_mm", "time_signature_indicator_guide_thickness_mm", "time_signature_indicator_divide_guide_thickness_mm", "measure_numbering_guide_thickness_mm", "measure_numbering_guide_dash_pattern_mm", "measure_numbering_placement"),
     "Stave": ("stave_two_line_thickness_mm", "stave_three_line_thickness_mm", "stave_clef_line_thickness_mm", "stave_ledger_line_length_mm", "stave_clef_line_dash_pattern_mm", "mini_piano_octave_numbering", "mini_piano_color"),
-    "Fonts": ("time_signature_indicator_classic_font", "time_signature_indicator_klavarskribo_font", "measure_numbering_font", "font_text", "font_title", "font_composer", "font_copyright", "font_arranger", "font_lyricist"),
+    "Fonts": ("time_signature_indicator_classic_font", "time_signature_indicator_klavarskribo_font", "measure_numbering_font", "tempo_font", "font_text", "font_title", "font_composer", "font_copyright", "font_arranger", "font_lyricist"),
     "Visibility": tuple(field.name for field in fields(Layout) if field.name.endswith("_visible")),
 }
 

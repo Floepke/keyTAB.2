@@ -31,6 +31,10 @@ class FluidSynthPlayer(QObject):
         self._thread: Thread | None = None
         self._lock = Lock()
         self._playing = False
+        self._playback_started_at: float | None = None
+        self._playback_start_tick = 0
+        self._playback_tempos: list[TempoEvent] = []
+        self._playback_time_per_quarter = 1
 
     @property
     def is_playing(self) -> bool:
@@ -46,9 +50,10 @@ class FluidSynthPlayer(QObject):
         self._all_notes_off()
         return True
 
-    def play(self, document: KeyTab2Document) -> bool:
+    def play(self, document: KeyTab2Document, start_tick: int = 0) -> bool:
         self.stop()
-        events = self._scheduled_events(document)
+        start_tick = max(0, int(start_tick))
+        events = self._scheduled_events(document, start_tick)
         if not events:
             self.playback_failed.emit("There are no notes to play.")
             return False
@@ -61,6 +66,10 @@ class FluidSynthPlayer(QObject):
         self._stop_event.clear()
         with self._lock:
             self._playing = True
+            self._playback_started_at = monotonic()
+            self._playback_start_tick = start_tick
+            self._playback_tempos = self._resolved_tempos(document)
+            self._playback_time_per_quarter = document.time_per_quarter
         self._thread = Thread(target=self._run, args=(events,), name="fluidsynth-playback", daemon=True)
         self._thread.start()
         self.playback_started.emit()
@@ -69,6 +78,17 @@ class FluidSynthPlayer(QObject):
     def stop(self) -> None:
         self._stop_event.set()
         self._all_notes_off()
+
+    def current_tick(self) -> int | None:
+        """Return the current score tick while full-score playback is active."""
+        with self._lock:
+            if not self._playing or self._playback_started_at is None:
+                return None
+            elapsed_seconds = monotonic() - self._playback_started_at
+            start_tick = self._playback_start_tick
+            tempos = self._playback_tempos
+            time_per_quarter = self._playback_time_per_quarter
+        return self._ticks_for_seconds(elapsed_seconds, start_tick, tempos, time_per_quarter)
 
     def audition(self, pitch: int, velocity: int = 64, duration_seconds: float = 0.15) -> bool:
         """Play one short note while full-score playback is idle."""
@@ -177,6 +197,7 @@ class FluidSynthPlayer(QObject):
             self._all_notes_off()
             with self._lock:
                 self._playing = False
+                self._playback_started_at = None
             self.playback_finished.emit()
 
     def _all_notes_off(self) -> None:
@@ -184,32 +205,59 @@ class FluidSynthPlayer(QObject):
             self._synth.all_notes_off(self._channel)
 
     @staticmethod
-    def _scheduled_events(document: KeyTab2Document) -> list[tuple[float, str, int, int]]:
+    def _resolved_tempos(document: KeyTab2Document) -> list[TempoEvent]:
         tempos = sorted((event for event in document.timeline_events if isinstance(event, TempoEvent)), key=lambda event: event.start_tick)
         if not tempos or tempos[0].start_tick > 0:
             tempos.insert(0, TempoEvent(start_tick=0, tempo=120))
+        return tempos
 
-        def seconds_at(tick: int) -> float:
-            seconds = 0.0
-            for index, tempo in enumerate(tempos):
-                next_tick = tempos[index + 1].start_tick if index + 1 < len(tempos) else tick
-                if tick <= tempo.start_tick:
-                    break
-                end_tick = min(tick, next_tick)
-                seconds += (end_tick - tempo.start_tick) * 60.0 / (max(1, tempo.tempo) * document.time_per_quarter)
-                if tick <= next_tick:
-                    break
-            return seconds
+    @staticmethod
+    def _seconds_at_tick(tick: int, tempos: list[TempoEvent], time_per_quarter: int) -> float:
+        seconds = 0.0
+        for index, tempo in enumerate(tempos):
+            next_tick = tempos[index + 1].start_tick if index + 1 < len(tempos) else tick
+            if tick <= tempo.start_tick:
+                break
+            end_tick = min(tick, next_tick)
+            seconds += (end_tick - tempo.start_tick) * 60.0 / (max(1, tempo.tempo) * time_per_quarter)
+            if tick <= next_tick:
+                break
+        return seconds
+
+    @staticmethod
+    def _ticks_for_seconds(seconds: float, start_tick: int, tempos: list[TempoEvent], time_per_quarter: int) -> int:
+        tick = start_tick
+        remaining_seconds = max(0.0, seconds)
+        tempo_index = max(index for index, tempo in enumerate(tempos) if tempo.start_tick <= start_tick)
+        while remaining_seconds > 0.0:
+            tempo = tempos[tempo_index]
+            next_tick = tempos[tempo_index + 1].start_tick if tempo_index + 1 < len(tempos) else None
+            seconds_per_tick = 60.0 / (max(1, tempo.tempo) * time_per_quarter)
+            if next_tick is None:
+                return round(tick + remaining_seconds / seconds_per_tick)
+            ticks_until_change = next_tick - tick
+            seconds_until_change = ticks_until_change * seconds_per_tick
+            if remaining_seconds <= seconds_until_change:
+                return round(tick + remaining_seconds / seconds_per_tick)
+            tick = next_tick
+            remaining_seconds -= seconds_until_change
+            tempo_index += 1
+        return tick
+
+    @classmethod
+    def _scheduled_events(cls, document: KeyTab2Document, start_tick: int = 0) -> list[tuple[float, str, int, int]]:
+        tempos = cls._resolved_tempos(document)
+        start_seconds = cls._seconds_at_tick(start_tick, tempos, document.time_per_quarter)
 
         events: list[tuple[float, str, int, int]] = []
         for page in document.pages:
             for system in page.systems:
                 for stave in system.staves:
                     for note in stave.events:
-                        if not isinstance(note, NoteEvent) or note.duration <= 0:
+                        if not isinstance(note, NoteEvent) or note.duration <= 0 or note.time + note.duration <= start_tick:
                             continue
                         pitch = max(0, min(127, int(note.pitch)))
                         velocity = max(1, min(127, int(note.velocity)))
-                        events.append((seconds_at(note.time), "on", pitch, velocity))
-                        events.append((seconds_at(note.time + note.duration), "off", pitch, 0))
+                        events.append((max(0.0, cls._seconds_at_tick(note.time, tempos, document.time_per_quarter) - start_seconds), "on", pitch, velocity))
+                        events.append((cls._seconds_at_tick(note.time + note.duration, tempos, document.time_per_quarter) - start_seconds, "off", pitch, 0))
         return sorted(events, key=lambda event: (event[0], 0 if event[1] == "off" else 1))

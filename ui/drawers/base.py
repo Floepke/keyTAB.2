@@ -20,7 +20,8 @@ DRAW_LAYERS = {
     "grid_line": 10,
     "stave_line": 20,
     "time_signature": 30,
-    "note_head": 40,
+    "note_head_white": 40,
+    "note_head_black": 41,
     "note_stem": 40,
     "chord_connector": 40,
     "note_stop": 40,
@@ -28,6 +29,7 @@ DRAW_LAYERS = {
     "beam": 50,
     "beam_connector": 50,
     "slur": 55,
+    "tempo": 60,
     "measure_number": 60,
     "editor_control": 70,
 }

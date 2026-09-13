@@ -7,7 +7,7 @@ from PySide6.QtCore import QPointF, QRect
 from PySide6.QtGui import QImage, QPainter
 from PySide6.QtWidgets import QApplication
 
-from keytab2_model import KeyTab2Document
+from keytab2_model import KeyTab2Document, NoteEvent
 from ui.drawers.stave_drawer import StaveDrawer
 from ui.paper_canvas import PaperCanvas
 
@@ -331,6 +331,35 @@ class NoteToolTests(unittest.TestCase):
         self.assertTrue(leading_note.continues_to_next)
         self.assertTrue(following_note.continues_from_previous)
         self.assertEqual(leading_note.continuation_id, following_note.continuation_id)
+
+    def test_duration_drag_targets_the_same_column_for_low_left_hand_notes(self) -> None:
+        second_system = self.document.split_system_at(self.document.pages[0].id, self.system.id, 1024)
+        third_system = self.document.split_system_at(self.document.pages[0].id, second_system.id, 2048)
+        self.document.split_system_at(self.document.pages[0].id, third_system.id, 3072)
+        for page in self.document.pages:
+            for system in page.systems:
+                system.staves[0].pitch_range = [53, 83]
+        self.document.repaginate_document()
+        canvas = PaperCanvas(self.document)
+        page = canvas.current_page
+        target_system = page.systems[2]
+        stave = target_system.staves[0]
+        note = NoteEvent(time=target_system.start_tick, duration=256, pitch=57, hand="left")
+        stave.events.append(note)
+        stave.touch()
+        geometry = next(
+            item
+            for item in canvas._stave_render_data(target_system, stave, canvas.stave_left_mm(target_system, stave)).notes.geometries
+            if item.event_id == note.id
+        )
+        point = QPointF(
+            geometry.body_points_mm[0][0],
+            (geometry.body_points_mm[1][1] + geometry.body_points_mm[2][1]) * 0.5,
+        )
+
+        selected_system, _, _ = canvas.stave_at(point, allow_outside_range=True)
+
+        self.assertIs(selected_system, target_system)
 
     def test_deleting_a_continuation_tail_removes_the_entire_linked_note(self) -> None:
         following_system = self.document.split_system_at(self.document.pages[0].id, self.system.id, 1024)

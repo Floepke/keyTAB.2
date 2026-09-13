@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
-from PySide6.QtGui import QMouseEvent, QWheelEvent
+from PySide6.QtGui import QColor, QKeyEvent, QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QApplication
 
 from keytab2_model import KeyTab2Document
@@ -163,6 +163,15 @@ class SelectionTests(unittest.TestCase):
 
         self.assertEqual(self.canvas.zoom, PaperView.ZOOM_FACTOR)
 
+    def test_paper_view_keeps_its_editor_surround_dark(self) -> None:
+        paper_view = PaperView()
+        paper_view.setWidget(self.canvas)
+
+        paper_view.set_editor_background("#252a30")
+
+        self.assertEqual(paper_view.viewport().palette().color(paper_view.viewport().backgroundRole()), QColor("#252a30"))
+        self.assertEqual(paper_view.widget().palette().color(paper_view.widget().backgroundRole()), QColor("#252a30"))
+
     def test_copy_cut_and_paste_preserve_original_note_pitches(self) -> None:
         self._add_note(60, 256)
         self._add_note(64, 384)
@@ -178,6 +187,15 @@ class SelectionTests(unittest.TestCase):
 
         self.assertEqual([(note.time, note.pitch) for note in self.stave.events], [(512, 60), (640, 64)])
         self.assertTrue(original_ids.isdisjoint({note.id for note in self.stave.events}))
+
+    def test_spacebar_requests_playback_from_the_mouse_time(self) -> None:
+        requested_ticks: list[int] = []
+        self.canvas.playback_toggle_requested.connect(requested_ticks.append)
+        self.canvas.mouse_time = 1024
+
+        self.canvas.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Space, Qt.KeyboardModifier.NoModifier))
+
+        self.assertEqual(requested_ticks, [1024])
 
     def test_delete_selection_removes_notes_without_changing_clipboard(self) -> None:
         self._add_note(60, 256)

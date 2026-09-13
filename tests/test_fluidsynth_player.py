@@ -48,6 +48,22 @@ class FluidSynthPlayerTests(unittest.TestCase):
 
         self.assertEqual(events, [(0.5, "on", 60, 64), (1.5, "off", 60, 0)])
 
+    def test_scheduling_from_a_tick_includes_already_sounding_notes(self) -> None:
+        document = KeyTab2Document.new()
+        document.pages[0].systems[0].staves[0].events.extend([
+            NoteEvent(time=128, duration=256, pitch=60),
+            NoteEvent(time=256, duration=128, pitch=64),
+        ])
+
+        events = FluidSynthPlayer._scheduled_events(document, start_tick=256)
+
+        self.assertEqual(events, [(0.0, "on", 60, 64), (0.0, "on", 64, 64), (0.25, "off", 60, 0), (0.25, "off", 64, 0)])
+
+    def test_playback_time_converts_to_an_absolute_tick_from_its_start(self) -> None:
+        tempos = [TempoEvent(start_tick=0, tempo=120)]
+
+        self.assertEqual(FluidSynthPlayer._ticks_for_seconds(0.5, 256, tempos, 256), 512)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,8 +5,8 @@ from __future__ import annotations
 import cairocffi as cairo
 import sys
 
-from PySide6.QtCore import QEvent, QPointF, QSize, Qt
-from PySide6.QtGui import QAction, QActionGroup, QCursor, QKeySequence
+from PySide6.QtCore import QEvent, QPointF, QSize, Qt, QTimer
+from PySide6.QtGui import QAction, QActionGroup, QColor, QCursor, QKeySequence, QPalette
 from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMenu, QMessageBox, QScrollArea, QSizePolicy, QToolBar, QVBoxLayout, QWidget
 
 from appdata_manager import get_theme, set_theme
@@ -67,8 +67,18 @@ class PaperView(QScrollArea):
         widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         widget.setMouseTracking(True)
         widget.installEventFilter(self)
-        super().setWidget(PaperContainer(widget))
+        self._paper_container = PaperContainer(widget)
+        super().setWidget(self._paper_container)
         self.setWidgetResizable(True)
+
+    def set_editor_background(self, color: str) -> None:
+        palette = self.viewport().palette()
+        palette.setColor(QPalette.ColorRole.Window, QColor(color))
+        self.viewport().setPalette(palette)
+        self.viewport().setAutoFillBackground(True)
+        if self.widget() is not None:
+            self.widget().setPalette(palette)
+            self.widget().setAutoFillBackground(True)
 
     def paper_canvas(self) -> PaperCanvas | None:
         return self._paper_canvas
@@ -183,6 +193,10 @@ class MainWindow(QMainWindow):
         self._player = FluidSynthPlayer(self)
         self._player.initialize()
         self.paper_canvas.note_audition_requested.connect(self._player.audition)
+        self.paper_canvas.playback_toggle_requested.connect(self._toggle_playback)
+        self._playhead_timer = QTimer(self)
+        self._playhead_timer.setInterval(16)
+        self._playhead_timer.timeout.connect(self._update_playhead)
         self.paper_canvas.set_document_change_callback(self._record_document_change)
         self.paper_canvas.set_history_callbacks(self.undo, self.redo)
         self.paper_view = PaperView()
@@ -319,6 +333,13 @@ class MainWindow(QMainWindow):
         self.time_signature_action.triggered.connect(self.paper_canvas.select_time_signature_mode)
         toolbar.addAction(self.time_signature_action)
 
+        self.tempo_action = QAction(get_qicon("tempo", (28, 28)), "", self)
+        self.tempo_action.setObjectName("tempoAction")
+        self.tempo_action.setToolTip("Insert and edit tempo markings")
+        self.tempo_action.setCheckable(True)
+        self.tempo_action.triggered.connect(self.paper_canvas.select_tempo_mode)
+        toolbar.addAction(self.tempo_action)
+
         self.left_slur_action = QAction(get_qicon("mirror:slur", (28, 28)), "", self)
         self.left_slur_action.setObjectName("leftSlurAction")
         self.left_slur_action.setToolTip("Insert and edit left-hand slurs")
@@ -339,6 +360,7 @@ class MainWindow(QMainWindow):
         note_hand_group.addAction(self.right_note_input_action)
         note_hand_group.addAction(self.system_break_action)
         note_hand_group.addAction(self.time_signature_action)
+        note_hand_group.addAction(self.tempo_action)
         note_hand_group.addAction(self.left_slur_action)
         note_hand_group.addAction(self.right_slur_action)
         self._note_hand_group = note_hand_group
@@ -370,6 +392,8 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self.stop_action)
         self._player.playback_started.connect(self._set_playback_actions)
         self._player.playback_finished.connect(self._set_playback_actions)
+        self._player.playback_started.connect(self._start_playhead)
+        self._player.playback_finished.connect(self._stop_playhead)
         self._player.playback_failed.connect(self._show_playback_error)
 
         self.addToolBar(toolbar)
@@ -566,6 +590,7 @@ class MainWindow(QMainWindow):
     def _set_theme(self, theme: str, *, persist: bool = True) -> None:
         self._theme = theme
         apply_theme(QApplication.instance(), theme)
+        self.paper_view.set_editor_background(THEMES["dark"]["window"])
         self._refresh_toolbar_icons()
         self.snap_dock.selector.refresh_icons(THEMES[theme]["text"])
         self.light_theme_action.setChecked(theme == "light")
@@ -580,6 +605,7 @@ class MainWindow(QMainWindow):
             (self.right_note_input_action, "note_right"),
             (self.system_break_action, "line_break"),
             (self.time_signature_action, "time_signature"),
+            (self.tempo_action, "tempo"),
             (self.left_slur_action, "mirror:slur"),
             (self.right_slur_action, "slur"),
             (self.previous_page_action, "previous"),
@@ -592,6 +618,24 @@ class MainWindow(QMainWindow):
 
     def _play_score(self) -> None:
         self._player.play(self.document)
+
+    def _toggle_playback(self, start_tick: int) -> None:
+        if self._player.is_playing:
+            self._player.stop()
+            self._stop_playhead()
+        else:
+            self._player.play(self.document, start_tick)
+
+    def _start_playhead(self) -> None:
+        self._update_playhead()
+        self._playhead_timer.start()
+
+    def _stop_playhead(self) -> None:
+        self._playhead_timer.stop()
+        self.paper_canvas.set_playback_tick(None)
+
+    def _update_playhead(self) -> None:
+        self.paper_canvas.set_playback_tick(self._player.current_tick())
 
     def _set_playback_actions(self) -> None:
         playing = self._player.is_playing

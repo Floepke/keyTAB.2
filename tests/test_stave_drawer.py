@@ -253,7 +253,7 @@ class StaveDrawerTests(unittest.TestCase):
         GridDrawer(context, (0.0, 0.0, 0.0)).draw(system, layout, 1.0, 10.0, 30.0, (0, 1024), (), metrics)
 
         self.assertIn(
-            unittest.mock.call(30.0 + metrics.measure_number_offset_mm, 21.0),
+            unittest.mock.call(30.0 + metrics.measure_number_offset_mm, 24.3125),
             context.move_to.call_args_list,
         )
 
@@ -335,7 +335,7 @@ class StaveDrawerTests(unittest.TestCase):
         context.text_extents.return_value = (0.0, -3.0, 5.0, 4.0, 5.0, 0.0)
         collision_index = Mock()
         collision_index.horizontal_occlusion_intervals.return_value = ((15.0, 20.0),)
-        collision_index.right_extent_mm.return_value = 30.0
+        collision_index.beam_right_extent_in_rect.return_value = None
         layout = Layout(scale=0.5)
         system = System(start_tick=0, end_tick=1024, top_mm=20.0, height_mm=40.0)
 
@@ -346,6 +346,26 @@ class StaveDrawerTests(unittest.TestCase):
         self.assertIn(unittest.mock.call(10.0, 20.0), context.move_to.call_args_list)
         self.assertIn(unittest.mock.call(20.0, 20.0), context.move_to.call_args_list)
         self.assertIn(unittest.mock.call(20.0, 1.3125), collision_index.horizontal_occlusion_intervals.call_args_list)
+
+    def test_measure_number_moves_only_for_an_overlapping_beam(self) -> None:
+        context = Mock()
+        context.text_extents.return_value = (0.0, -3.0, 5.0, 4.0, 5.0, 0.0)
+        collision_index = Mock()
+        collision_index.horizontal_occlusion_intervals.return_value = ()
+        collision_index.beam_right_extent_in_rect.return_value = 38.0
+        layout = Layout(scale=0.5)
+        metrics = SystemMetrics.from_layout(layout)
+        system = System(start_tick=0, end_tick=1024, top_mm=20.0, height_mm=40.0)
+
+        GridDrawer(context, (0.0, 0.0, 0.0)).draw(
+            system, layout, 1.0, 10.0, 30.0, (0, 1024), (), metrics, collision_index
+        )
+
+        self.assertIn(
+            unittest.mock.call(38.0 + metrics.measure_number_offset_mm, 24.3125),
+            context.move_to.call_args_list,
+        )
+        collision_index.beam_right_extent_in_rect.assert_called_once_with(33.25, 21.3125, 38.25, 25.3125)
 
     def test_system_culling_includes_controls_and_excludes_distant_systems(self) -> None:
         layout = Layout(scale=0.5)

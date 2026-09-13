@@ -616,6 +616,7 @@ class KeyTab2Document:
             "time_signature_indicator_classic_font",
             "time_signature_indicator_klavarskribo_font",
             "measure_numbering_font",
+            "tempo_font",
             "font_text",
             "font_title",
             "font_composer",

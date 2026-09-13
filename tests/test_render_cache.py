@@ -8,16 +8,29 @@ from PySide6.QtCore import QPoint, QPointF, QRect, Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication
 
-from keytab2_model import BaseGrid, BeamEvent, KeyTab2Document, NoteEvent, SlurEvent, Stave
+from keytab2_model import BaseGrid, BeamEvent, KeyTab2Document, NoteEvent, SlurEvent, Stave, System
 from ui.drawers.stave_drawer import StaveDrawer
 from ui.drawers.note_drawer import NoteDrawer
-from ui.drawers.base import DrawCommandBuffer, DrawerBase
+from ui.drawers.base import DRAW_LAYERS, DrawCommandBuffer, DrawerBase
+from ui.drawers.grid_drawer import GridDrawer
+from ui.drawers.metrics import SystemMetrics
 from ui.paper_canvas import PaperCanvas
 from ui.main_window import PaperView
-from ui.render_cache import build_stave_render_data
+from ui.render_cache import BeamGeometry, MeasureCollisionIndex, build_stave_render_data
 
 
 class RenderCacheTests(unittest.TestCase):
+    def test_black_notehead_layer_flushes_after_white_notehead_layer(self) -> None:
+        paint_order: list[str] = []
+        command_buffer = DrawCommandBuffer()
+        command_buffer.add(("note_head_black",), lambda: paint_order.append("black"))
+        command_buffer.add(("note_head_white",), lambda: paint_order.append("white"))
+
+        command_buffer.flush()
+
+        self.assertLess(DRAW_LAYERS["note_head_white"], DRAW_LAYERS["note_head_black"])
+        self.assertEqual(paint_order, ["white", "black"])
+
     def test_continuation_geometry_omits_the_second_head_and_first_stop(self) -> None:
         document = KeyTab2Document.new()
         page = document.pages[0]
@@ -153,6 +166,45 @@ class RenderCacheTests(unittest.TestCase):
         self.assertTrue(data.collision_index.horizontal_occlusion_intervals(system.top_mm))
         self.assertEqual(data.collision_index.horizontal_occlusion_intervals(system.top_mm + system.height_mm / 8), ())
 
+    def test_measure_number_collision_only_matches_overlapping_beams(self) -> None:
+        beam = BeamGeometry(
+            "beam",
+            0,
+            256,
+            ((30.0, 20.0), (40.0, 30.0), (41.0, 30.0), (31.0, 20.0)),
+            (),
+            0.5,
+            (30.0, 20.0, 41.0, 30.0),
+            41.0,
+        )
+        index = MeasureCollisionIndex((), (beam,))
+
+        self.assertEqual(index.beam_right_extent_in_rect(34.0, 23.0, 36.0, 25.0), 41.0)
+        self.assertIsNone(index.beam_right_extent_in_rect(34.0, 20.0, 36.0, 21.0))
+
+    def test_measure_number_publishes_its_right_edge_for_tempo_alignment(self) -> None:
+        context = unittest.mock.Mock()
+        context.text_extents.return_value = (0.0, -3.0, 5.0, 4.0, 5.0, 0.0)
+        layout = KeyTab2Document.new().layout
+        layout.scale = 0.5
+        system = System(start_tick=0, end_tick=1024, top_mm=20.0, height_mm=40.0)
+        metrics = SystemMetrics.from_layout(layout)
+        right_edges: dict[int, float] = {}
+
+        GridDrawer(context, (0.0, 0.0, 0.0)).draw(
+            system,
+            layout,
+            1.0,
+            10.0,
+            30.0,
+            (0, 1024),
+            (),
+            metrics,
+            measure_number_right_edges=right_edges,
+        )
+
+        self.assertEqual(right_edges, {0: 30.0 + metrics.measure_number_offset_mm + 5.0})
+
     def test_continuation_dots_include_same_hand_note_crossings(self) -> None:
         document = KeyTab2Document.new()
         system = document.pages[0].systems[0]
@@ -201,6 +253,22 @@ class RenderCacheTests(unittest.TestCase):
         beam_start_x = (beam.polygon_mm[0][0] + beam.polygon_mm[3][0]) * 0.5
         self.assertEqual(len(beam.segments_mm), 2)
         self.assertAlmostEqual(beam_start_x, spanning_note.stem[2])
+
+    def test_beam_geometry_ignores_notes_outside_the_current_system(self) -> None:
+        document = KeyTab2Document.new()
+        system = document.pages[0].systems[0]
+        stave = system.staves[0]
+        stave.events.extend([
+            NoteEvent(time=0, duration=128, pitch=60, hand="left"),
+            NoteEvent(time=128, duration=128, pitch=64, hand="left"),
+            NoteEvent(time=system.end_tick, duration=128, pitch=55, hand="left"),
+            BeamEvent(time=0, duration=256, hand="left"),
+        ])
+
+        data = build_stave_render_data(system, stave, document.layout, 10.0, document.time_per_quarter * 4, document.base_grid)
+
+        self.assertEqual(len(data.notes.geometries), 2)
+        self.assertEqual(len(data.beams.geometries), 1)
 
     def test_notes_beam_automatically_inside_a_base_grid_beat_group(self) -> None:
         document = KeyTab2Document.new()
@@ -385,7 +453,7 @@ class RenderCacheTests(unittest.TestCase):
         original_draw_system = canvas._draw_system
 
         def capture_draw_system(*arguments, **keyword_arguments):
-            drawn_system_ids.append(arguments[8].id)
+            drawn_system_ids.append(arguments[10].id)
             return original_draw_system(*arguments, **keyword_arguments)
 
         canvas._draw_system = capture_draw_system

@@ -317,6 +317,8 @@ class KeyTab2DocumentTests(unittest.TestCase):
         document.layout.stave_clef_line_dash_pattern_mm = [2.0, 1.0]
         document.layout.measure_numbering_font.size_pt = 28.0
         document.layout.measure_numbering_font.italic = True
+        document.layout.tempo_font.size_pt = 36.0
+        document.layout.tempo_font.bold = False
 
         restored = KeyTab2Document.from_dict(document.to_dict())
 
@@ -324,6 +326,8 @@ class KeyTab2DocumentTests(unittest.TestCase):
         self.assertEqual(restored.layout.stave_clef_line_dash_pattern_mm, [2.0, 1.0])
         self.assertEqual(restored.layout.measure_numbering_font.size_pt, 28.0)
         self.assertTrue(restored.layout.measure_numbering_font.italic)
+        self.assertEqual(restored.layout.tempo_font.size_pt, 36.0)
+        self.assertFalse(restored.layout.tempo_font.bold)
 
     def test_rejects_non_native_extension(self) -> None:
         with self.assertRaises(ValueError):

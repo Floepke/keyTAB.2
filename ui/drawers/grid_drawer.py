@@ -12,7 +12,7 @@ from ui.render_cache import MeasureCollisionIndex
 
 
 class GridDrawer(DrawerBase):
-    def draw(self, system: System, layout: Layout, stave_scale: float, left_mm: float, right_mm: float, measure_starts: tuple[int, ...], group_starts: tuple[int, ...], metrics: SystemMetrics, collision_index: MeasureCollisionIndex | None = None, is_final_system: bool = False, show_measure_numbers: bool = True) -> None:
+    def draw(self, system: System, layout: Layout, stave_scale: float, left_mm: float, right_mm: float, measure_starts: tuple[int, ...], group_starts: tuple[int, ...], metrics: SystemMetrics, collision_index: MeasureCollisionIndex | None = None, is_final_system: bool = False, show_measure_numbers: bool = True, measure_number_right_edges: dict[int, float] | None = None) -> None:
         tick_height = system.height_mm / (system.end_tick - system.start_tick)
         measure_font = layout.measure_numbering_font
         measure_size_mm = layout.engraving_pt_to_mm(measure_font.size_pt, stave_scale)
@@ -32,20 +32,33 @@ class GridDrawer(DrawerBase):
         for measure_offset, tick in enumerate(visible_measure_starts):
             y_mm = system.top_mm + (tick - system.start_tick) * tick_height
             measure_text = str(system.first_measure_number + measure_offset)
-            _, y_bearing_mm, _, text_height_mm = self.text_extents(measure_text, measure_size_mm, measure_font)
-            baseline_mm = y_mm - (y_bearing_mm + text_height_mm * 0.5) - measure_font.y_offset
+            x_bearing_mm, y_bearing_mm, text_width_mm, text_height_mm = self.text_extents(measure_text, measure_size_mm, measure_font)
+            text_top_mm = y_mm + metrics.barline_width_mm * 0.5 + 1.0
+            baseline_mm = text_top_mm - y_bearing_mm
             draw_line_with_gaps(y_mm, metrics.barline_width_mm, ("grid_barline",))
-            next_tick = visible_measure_starts[measure_offset + 1] if measure_offset + 1 < len(visible_measure_starts) else system.end_tick
-            note_right_mm = collision_index.right_extent_mm(tick, next_tick, right_mm) if collision_index else right_mm
             if show_measure_numbers and layout.measure_numbers_visible:
+                text_left_mm = right_mm + metrics.measure_number_offset_mm
+                beam_right_mm = collision_index.beam_right_extent_in_rect(
+                    text_left_mm + measure_font.x_offset,
+                    text_top_mm + measure_font.y_offset,
+                    text_left_mm + measure_font.x_offset + text_width_mm,
+                    text_top_mm + measure_font.y_offset + text_height_mm,
+                ) if collision_index else None
                 self.draw_text(
                     measure_text,
-                    max(right_mm, note_right_mm) + metrics.measure_number_offset_mm,
+                    max(right_mm, beam_right_mm or right_mm) + metrics.measure_number_offset_mm - x_bearing_mm,
                     baseline_mm,
                     measure_size_mm,
                     measure_font,
                     tags=("measure_number",),
                 )
+                if measure_number_right_edges is not None:
+                    measure_number_right_edges[tick] = (
+                        max(right_mm, beam_right_mm or right_mm)
+                        + metrics.measure_number_offset_mm
+                        + measure_font.x_offset
+                        + text_width_mm
+                    )
         for tick in group_starts:
             if system.start_tick < tick < system.end_tick:
                 y_mm = system.top_mm + (tick - system.start_tick) * tick_height
