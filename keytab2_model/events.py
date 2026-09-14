@@ -142,7 +142,9 @@ class ArpeggioEvent(Event):
     start_tick: int = 0
     rtime1_ticks: int = 0
     rtime2_ticks: int = 32
+    note_ids: list[str] = field(default_factory=list)
     note_pitches: list[int] = field(default_factory=list)
+    hand: str = "left"
     type: str = field(default="arpeggio", init=False)
 
 

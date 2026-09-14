@@ -354,6 +354,13 @@ class MainWindow(QMainWindow):
         self.right_slur_action.triggered.connect(lambda: self.paper_canvas.select_slur_mode("right"))
         toolbar.addAction(self.right_slur_action)
 
+        self.arpeggio_action = QAction(get_qicon("arpeggio", (28, 28)), "", self)
+        self.arpeggio_action.setObjectName("arpeggioAction")
+        self.arpeggio_action.setToolTip("Create and edit arpeggios")
+        self.arpeggio_action.setCheckable(True)
+        self.arpeggio_action.triggered.connect(self.paper_canvas.select_arpeggio_mode)
+        toolbar.addAction(self.arpeggio_action)
+
         note_hand_group = QActionGroup(toolbar)
         note_hand_group.setExclusive(True)
         note_hand_group.addAction(self.left_note_input_action)
@@ -363,6 +370,7 @@ class MainWindow(QMainWindow):
         note_hand_group.addAction(self.tempo_action)
         note_hand_group.addAction(self.left_slur_action)
         note_hand_group.addAction(self.right_slur_action)
+        note_hand_group.addAction(self.arpeggio_action)
         self._note_hand_group = note_hand_group
         self._note_hand_group.triggered.connect(lambda _action: self._refresh_toolbar_icons())
         self.paper_canvas.note_hand_changed.connect(self._sync_note_input_toolbar)

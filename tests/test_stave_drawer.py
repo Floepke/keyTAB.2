@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import Mock
 
-import cairo
+import cairocffi as cairo
 from PySide6.QtWidgets import QApplication
 
 from keytab2_model.document import NoteEvent, Stave, System
@@ -346,6 +346,28 @@ class StaveDrawerTests(unittest.TestCase):
         self.assertIn(unittest.mock.call(10.0, 20.0), context.move_to.call_args_list)
         self.assertIn(unittest.mock.call(20.0, 20.0), context.move_to.call_args_list)
         self.assertIn(unittest.mock.call(20.0, 1.3125), collision_index.horizontal_occlusion_intervals.call_args_list)
+
+    def test_grid_drawer_cuts_a_barline_for_an_arpeggio_without_cutting_gridlines(self) -> None:
+        context = Mock()
+        context.text_extents.return_value = (0.0, -3.0, 5.0, 4.0, 5.0, 0.0)
+        layout = Layout(scale=0.5)
+        system = System(start_tick=0, end_tick=1024, top_mm=20.0, height_mm=40.0)
+
+        GridDrawer(context, (0.0, 0.0, 0.0)).draw(
+            system,
+            layout,
+            1.0,
+            10.0,
+            30.0,
+            (0, 1024),
+            (256,),
+            SystemMetrics.from_layout(layout),
+            barline_gaps_by_tick={0: ((15.0, 20.0),)},
+        )
+
+        self.assertIn(unittest.mock.call(10.0, 20.0), context.move_to.call_args_list)
+        self.assertIn(unittest.mock.call(20.0, 20.0), context.move_to.call_args_list)
+        self.assertIn(unittest.mock.call(10.0, 30.0), context.move_to.call_args_list)
 
     def test_measure_number_moves_only_for_an_overlapping_beam(self) -> None:
         context = Mock()

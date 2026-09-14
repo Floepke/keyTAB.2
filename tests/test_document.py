@@ -6,7 +6,7 @@ from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 
-from keytab2_model import BaseGrid, BeamEvent, KeyTab2Document, LineBreakEvent, NoteEvent, SlurEvent, TempoEvent, TextEvent
+from keytab2_model import ArpeggioEvent, BaseGrid, BeamEvent, KeyTab2Document, LineBreakEvent, NoteEvent, SlurEvent, TempoEvent, TextEvent
 from keytab2_model.base_grid import apply_beam_overrides, beam_windows, grid_boundaries, grid_line_boundaries
 from keytab2_model.layout import Layout
 from keytab2_model.events import EVENT_TYPES
@@ -321,6 +321,17 @@ class KeyTab2DocumentTests(unittest.TestCase):
         restored_events = restored.pages[0].systems[0].staves[0].events
 
         self.assertEqual([note.continuation_id for note in restored_events], [note.id for note in restored_events])
+
+    def test_loading_resolves_legacy_arpeggio_members_to_note_ids(self) -> None:
+        document = KeyTab2Document.new()
+        stave = document.pages[0].systems[0].staves[0]
+        notes = [NoteEvent(time=256, pitch=pitch, hand="left") for pitch in (60, 64)]
+        stave.events.extend((*notes, ArpeggioEvent(start_tick=256, note_pitches=[60, 64], hand="left")))
+
+        restored = KeyTab2Document.from_dict(document.to_dict())
+        arpeggio = next(event for event in restored.pages[0].systems[0].staves[0].events if isinstance(event, ArpeggioEvent))
+
+        self.assertEqual(arpeggio.note_ids, [note.id for note in notes])
 
     def test_document_serializes_systems_not_lines(self) -> None:
         page_data = KeyTab2Document.new().to_dict()["pages"][0]

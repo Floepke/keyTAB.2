@@ -28,6 +28,7 @@ DRAW_LAYERS = {
     "continuation_dot": 40,
     "beam": 50,
     "beam_connector": 50,
+    "arpeggio": 52,
     "slur": 55,
     "tempo": 60,
     "measure_number": 60,

@@ -6,7 +6,7 @@ from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import QColor, QKeyEvent, QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QApplication
 
-from keytab2_model import KeyTab2Document
+from keytab2_model import ArpeggioEvent, KeyTab2Document
 from ui.drawers.stave_drawer import StaveDrawer
 from ui.main_window import PaperView
 from ui.paper_canvas import PaperCanvas
@@ -288,6 +288,106 @@ class SelectionTests(unittest.TestCase):
         self.assertNotEqual(pasted.continuation_id, original.continuation_id)
         self.assertTrue(self.tool.on_right_click(self._point(60, 512)))
         self.assertEqual(self.stave.events, [original])
+
+    def test_arpeggio_mode_creates_and_drags_a_separate_event(self) -> None:
+        self._add_note(60, 256)
+        self._add_note(64, 256)
+        self.canvas.select_arpeggio_mode()
+
+        self.assertTrue(self.canvas._tool_manager.active_tool.on_left_press(self._point(60, 256)))
+        arpeggio = next(event for event in self.stave.events if isinstance(event, ArpeggioEvent))
+        self.assertEqual(arpeggio.note_ids, [note.id for note in self.stave.events if not isinstance(note, ArpeggioEvent)])
+        self.assertEqual(arpeggio.note_pitches, [60, 64])
+
+        tool = self.canvas._tool_manager.active_tool
+        _low, high = next(points for candidate, points in tool.visible_handles() if candidate is arpeggio)
+        drag_target = QPointF(high[0], self.canvas._time_to_y_mm(self.system, 512))
+        self.assertTrue(tool.on_left_press(QPointF(*high)))
+        self.assertTrue(tool.on_left_drag(drag_target))
+        self.assertTrue(tool.on_left_release(drag_target))
+        self.assertEqual(arpeggio.rtime2_ticks, 256)
+        geometry_by_id = {
+            geometry.event_id: geometry
+            for geometry in self.canvas._stave_render_data(self.system, self.stave, self.left_mm).notes.geometries
+        }
+        self.assertTrue(all(
+            geometry_by_id[note_id].stem[0] == geometry_by_id[note_id].stem[2]
+            for note_id in arpeggio.note_ids
+        ))
+        self.assertAlmostEqual(
+            geometry_by_id[arpeggio.note_ids[1]].body_points_mm[2][1],
+            self.canvas._time_to_y_mm(self.system, 320),
+        )
+        self.assertAlmostEqual(
+            geometry_by_id[arpeggio.note_ids[1]].head.points_mm[0][1] - geometry_by_id[arpeggio.note_ids[0]].head.points_mm[0][1],
+            self.system.height_mm * 256 / (self.system.end_tick - self.system.start_tick),
+        )
+        slope = (
+            geometry_by_id[arpeggio.note_ids[1]].stem[1] - geometry_by_id[arpeggio.note_ids[0]].stem[1]
+        ) / (
+            geometry_by_id[arpeggio.note_ids[1]].stem[0] - geometry_by_id[arpeggio.note_ids[0]].stem[0]
+        )
+        supports = []
+        for note_id in arpeggio.note_ids:
+            geometry = geometry_by_id[note_id]
+            is_up = max(y_mm for _, y_mm in geometry.head.points_mm) - geometry.stem[1] < 1e-6
+            supports.append((max if is_up else min)(
+                point[1] - slope * point[0] for point in geometry.head.points_mm
+            ))
+        self.assertAlmostEqual(*supports)
+        anchor_id = arpeggio.note_ids[-1]
+        self.assertAlmostEqual(
+            geometry_by_id[anchor_id].start_tick,
+            arpeggio.start_tick + arpeggio.rtime2_ticks,
+        )
+
+    def test_arpeggio_handles_can_move_to_either_side_but_not_the_same_side(self) -> None:
+        self._add_note(60, 256)
+        self._add_note(64, 256)
+        self.canvas.select_arpeggio_mode()
+        tool = self.canvas._tool_manager.active_tool
+        self.assertTrue(tool.on_left_press(self._point(60, 256)))
+        arpeggio = next(event for event in self.stave.events if isinstance(event, ArpeggioEvent))
+        low, high = next(points for candidate, points in tool.visible_handles() if candidate is arpeggio)
+
+        same_side_after = QPointF(low[0], self.canvas._time_to_y_mm(self.system, 384))
+        self.assertTrue(tool.on_left_press(QPointF(*low)))
+        self.assertTrue(tool.on_left_drag(same_side_after))
+        self.assertTrue(tool.on_left_release(same_side_after))
+        self.assertEqual(arpeggio.rtime1_ticks, 0)
+
+        before_time = QPointF(low[0], self.canvas._time_to_y_mm(self.system, 128))
+        self.assertTrue(tool.on_left_press(QPointF(*low)))
+        self.assertTrue(tool.on_left_drag(before_time))
+        self.assertTrue(tool.on_left_release(before_time))
+        self.assertEqual(arpeggio.rtime1_ticks, -128)
+
+        _low, high = next(points for candidate, points in tool.visible_handles() if candidate is arpeggio)
+        same_side_before = QPointF(high[0], self.canvas._time_to_y_mm(self.system, 192))
+        self.assertTrue(tool.on_left_press(QPointF(*high)))
+        self.assertTrue(tool.on_left_drag(same_side_before))
+        self.assertTrue(tool.on_left_release(same_side_before))
+        self.assertEqual(arpeggio.rtime2_ticks, 0)
+
+        low, _high = next(points for candidate, points in tool.visible_handles() if candidate is arpeggio)
+        at_start_time = QPointF(low[0], self.canvas._time_to_y_mm(self.system, 256))
+        self.assertTrue(tool.on_left_press(QPointF(*low)))
+        self.assertTrue(tool.on_left_drag(at_start_time))
+        self.assertTrue(tool.on_left_release(at_start_time))
+        self.assertEqual((arpeggio.rtime1_ticks, arpeggio.rtime2_ticks), (0, 0))
+        self.assertIn(arpeggio, self.stave.events)
+        self.assertIn(arpeggio, (candidate for candidate, _points in tool.visible_handles()))
+
+    def test_deleting_an_arpeggio_member_removes_the_incomplete_arpeggio(self) -> None:
+        self._add_note(60, 256)
+        self._add_note(64, 256)
+        self.canvas.select_arpeggio_mode()
+        self.assertTrue(self.canvas._tool_manager.active_tool.on_left_press(self._point(60, 256)))
+        note_id = next(note.id for note in self.stave.events if getattr(note, "pitch", None) == 60)
+        self.canvas._selected_note_ids = {note_id}
+
+        self.assertTrue(self.canvas.delete_selection())
+        self.assertFalse(any(isinstance(event, ArpeggioEvent) for event in self.stave.events))
 
     def test_spacebar_requests_playback_from_the_mouse_time(self) -> None:
         requested_ticks: list[int] = []

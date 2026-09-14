@@ -225,6 +225,7 @@ class NoteTool(BaseTool):
                         )
                     ]
                     if len(stave.events) != original_count:
+                        self.canvas.document.normalize_stave_arpeggios(stave)
                         stave.touch()
                         changed_staves.append((system.id, stave.id))
         if not self.canvas.repaginate_if_ledger_layout_changed(ledger_layout_before):

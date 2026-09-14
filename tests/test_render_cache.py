@@ -8,7 +8,7 @@ from PySide6.QtCore import QPoint, QPointF, QRect, Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication
 
-from keytab2_model import BaseGrid, BeamEvent, KeyTab2Document, NoteEvent, SlurEvent, Stave, System
+from keytab2_model import ArpeggioEvent, BaseGrid, BeamEvent, KeyTab2Document, NoteEvent, SlurEvent, Stave, System
 from ui.drawers.stave_drawer import StaveDrawer
 from ui.drawers.note_drawer import NoteDrawer
 from ui.drawers.base import DRAW_LAYERS, DrawCommandBuffer, DrawerBase
@@ -16,10 +16,17 @@ from ui.drawers.grid_drawer import GridDrawer
 from ui.drawers.metrics import SystemMetrics
 from ui.paper_canvas import PaperCanvas
 from ui.main_window import PaperView
-from ui.render_cache import BeamGeometry, MeasureCollisionIndex, build_stave_render_data
+from ui.render_cache import BeamGeometry, MeasureCollisionIndex, TickIndex, build_stave_render_data
 
 
 class RenderCacheTests(unittest.TestCase):
+    def test_tick_index_handles_zero_duration_geometry(self) -> None:
+        geometry = BeamGeometry("zero", 256.5, 256.5, (), (), 0.5, (0.0, 0.0, 0.0, 0.0), 0.0)
+
+        index = TickIndex((geometry,))
+
+        self.assertEqual(index.intersecting(255.0, 257.0), (geometry,))
+
     def test_black_notehead_layer_flushes_after_white_notehead_layer(self) -> None:
         paint_order: list[str] = []
         command_buffer = DrawCommandBuffer()

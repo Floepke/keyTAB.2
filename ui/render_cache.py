@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 
 from keytab2_model.base_grid import BaseGrid, apply_beam_overrides, beam_windows, grid_boundaries
 from keytab2_model.document import Stave, System
-from keytab2_model.events import BeamEvent, NoteEvent
+from keytab2_model.events import ArpeggioEvent, BeamEvent, NoteEvent
 from keytab2_model.layout import Layout
 from ui.drawers.stave_drawer import StaveDrawer
 from ui.notehead_geometry import NoteheadGeometry, build_notehead_outline, resolve_notehead
@@ -62,7 +62,7 @@ class BeamGeometry:
 
 @dataclass(frozen=True)
 class _IntervalNode:
-    center_tick: int
+    center_tick: float
     overlaps: tuple[NoteGeometry | BeamGeometry, ...]
     left: "_IntervalNode | None"
     right: "_IntervalNode | None"
@@ -79,13 +79,13 @@ class TickIndex:
     def _build_tree(cls, geometries: tuple[NoteGeometry | BeamGeometry, ...]) -> _IntervalNode | None:
         if not geometries:
             return None
-        midpoints = sorted((geometry.start_tick + geometry.end_tick) // 2 for geometry in geometries)
+        midpoints = sorted((geometry.start_tick + geometry.end_tick) / 2 for geometry in geometries)
         center_tick = midpoints[len(midpoints) // 2]
         left: list[NoteGeometry | BeamGeometry] = []
         overlaps: list[NoteGeometry | BeamGeometry] = []
         right: list[NoteGeometry | BeamGeometry] = []
         for geometry in geometries:
-            if geometry.end_tick <= center_tick:
+            if geometry.end_tick < center_tick:
                 left.append(geometry)
             elif geometry.start_tick > center_tick:
                 right.append(geometry)
@@ -98,7 +98,7 @@ class TickIndex:
             cls._build_tree(tuple(right)),
         )
 
-    def intersecting(self, start_tick: int, end_tick: int) -> tuple[NoteGeometry | BeamGeometry, ...]:
+    def intersecting(self, start_tick: float, end_tick: float) -> tuple[NoteGeometry | BeamGeometry, ...]:
         result: list[NoteGeometry | BeamGeometry] = []
 
         def visit(node: _IntervalNode | None) -> None:
@@ -216,6 +216,70 @@ def build_stave_render_data(
     def y_for_tick(tick: int) -> float:
         return system.top_mm + (tick - system.start_tick) * tick_height
 
+    def notehead_parameters(note: NoteEvent) -> tuple[str, bool, bool, float]:
+        hand = "left" if note.hand == "left" else "right"
+        simultaneous = [other for other in notes if other.time == note.time and other.id != note.id]
+        has_adjacent_note = any(abs(other.pitch - note.pitch) == 1 for other in simultaneous)
+        has_white_chord_note_same_hand = any(
+            other.hand == hand and other.pitch % 12 not in {1, 3, 6, 8, 10}
+            for other in simultaneous
+        )
+        black_above = (
+            layout.black_note_rule == "above_stem"
+            or (layout.black_note_rule == "above_stem_if_collision" and has_adjacent_note)
+            or (
+                layout.black_note_rule == "above_stem_if_chord_and_white_note_same_hand"
+                and has_white_chord_note_same_hand
+            )
+        )
+        form, is_up, filled = resolve_notehead(note.notehead, note.pitch, black_above)
+        narrow_black = note.pitch % 12 in {1, 3, 6, 8, 10} and layout.black_note_rule == "below_stem" and has_adjacent_note
+        return form, is_up, filled, layout.note_width_scaling * (0.7 if narrow_black else 1.0)
+
+    arpeggio_start_offsets: dict[str, float] = {}
+    arpeggio_member_ids: set[str] = set()
+    notes_by_id = {note.id: note for note in notes}
+    for arpeggio in (event for event in stave.events if isinstance(event, ArpeggioEvent)):
+        if arpeggio.rtime1_ticks == arpeggio.rtime2_ticks == 0:
+            continue
+        members = [notes_by_id[note_id] for note_id in arpeggio.note_ids if note_id in notes_by_id]
+        members = sorted(
+            (note for note in members if note.time == arpeggio.start_tick and note.hand == arpeggio.hand),
+            key=lambda note: note.pitch,
+        )
+        if len(members) < 2:
+            continue
+        arpeggio_member_ids.update(member.id for member in members)
+        low, high = members[0], members[-1]
+        low_x_mm = StaveDrawer.pitch_to_x_mm(low.pitch, stave.pitch_range[0], left_mm, semitone_mm)
+        high_x_mm = StaveDrawer.pitch_to_x_mm(high.pitch, stave.pitch_range[0], left_mm, semitone_mm)
+        low_y_mm = y_for_tick(arpeggio.start_tick + arpeggio.rtime1_ticks)
+        high_y_mm = y_for_tick(arpeggio.start_tick + arpeggio.rtime2_ticks)
+        if abs(high_x_mm - low_x_mm) <= 1e-9:
+            continue
+        slope = (high_y_mm - low_y_mm) / (high_x_mm - low_x_mm)
+        anchor = high if arpeggio.hand == "left" else low
+        anchor_x_mm = high_x_mm if arpeggio.hand == "left" else low_x_mm
+        anchor_y_mm = high_y_mm if arpeggio.hand == "left" else low_y_mm
+        form, is_up, filled, width_scale = notehead_parameters(anchor)
+        anchor_head = build_notehead_outline(
+            anchor_x_mm, anchor_y_mm, anchor.hand, form, is_up, filled, semitone_mm,
+            width_scale, layout.notehead_height_scaling, layout.notehead_tilt,
+        )
+        residuals = [point_y - slope * point_x for point_x, point_y in anchor_head.points_mm]
+        line_intercept = max(residuals) if is_up else min(residuals)
+        for member in members:
+            member_x_mm = StaveDrawer.pitch_to_x_mm(member.pitch, stave.pitch_range[0], left_mm, semitone_mm)
+            form, is_up, filled, width_scale = notehead_parameters(member)
+            member_head = build_notehead_outline(
+                member_x_mm, 0.0, member.hand, form, is_up, filled, semitone_mm,
+                width_scale, layout.notehead_height_scaling, layout.notehead_tilt,
+            )
+            residuals = [point_y - slope * point_x for point_x, point_y in member_head.points_mm]
+            support_residual = max(residuals) if is_up else min(residuals)
+            original_y_mm = y_for_tick(member.time)
+            arpeggio_start_offsets[member.id] = (line_intercept - support_residual - original_y_mm) / tick_height
+
     starts_by_hand: dict[str, list[int]] = {"left": [], "right": []}
     ends_by_hand: dict[str, list[int]] = {"left": [], "right": []}
     for note in notes:
@@ -235,27 +299,15 @@ def build_stave_render_data(
         if end_tick <= start_tick:
             continue
         x_mm = StaveDrawer.pitch_to_x_mm(note.pitch, stave.pitch_range[0], left_mm, semitone_mm)
-        y_start_mm = y_for_tick(start_tick)
+        visual_offset_ticks = arpeggio_start_offsets.get(note.id, 0)
+        visual_start_tick = start_tick + visual_offset_ticks
+        visual_end_tick = max(end_tick, visual_start_tick + 1)
+        y_start_mm = y_for_tick(visual_start_tick)
         y_end_mm = y_for_tick(end_tick)
         stem_tip_mm = x_mm - stem_length_mm if hand == "left" else x_mm + stem_length_mm
         body_points = ((x_mm, y_start_mm), (x_mm - semitone_mm, y_start_mm + semitone_mm), (x_mm - semitone_mm, y_end_mm), (x_mm + semitone_mm, y_end_mm), (x_mm + semitone_mm, y_start_mm + semitone_mm))
-        simultaneous = [other for other in notes if other.time == note.time and other.id != note.id]
-        has_adjacent_note = any(abs(other.pitch - note.pitch) == 1 for other in simultaneous)
-        has_white_chord_note_same_hand = any(
-            other.hand == hand and other.pitch % 12 not in {1, 3, 6, 8, 10}
-            for other in simultaneous
-        )
-        black_above = (
-            layout.black_note_rule == "above_stem"
-            or (layout.black_note_rule == "above_stem_if_collision" and has_adjacent_note)
-            or (
-                layout.black_note_rule == "above_stem_if_chord_and_white_note_same_hand"
-                and has_white_chord_note_same_hand
-            )
-        )
-        form, is_up, filled = resolve_notehead(note.notehead, note.pitch, black_above)
-        narrow_black = note.pitch % 12 in {1, 3, 6, 8, 10} and layout.black_note_rule == "below_stem" and has_adjacent_note
-        head = build_notehead_outline(x_mm, y_start_mm, hand, form, is_up, filled, semitone_mm, layout.note_width_scaling * (0.7 if narrow_black else 1.0), layout.notehead_height_scaling, layout.notehead_tilt)
+        form, is_up, filled, width_scale = notehead_parameters(note)
+        head = build_notehead_outline(x_mm, y_start_mm, hand, form, is_up, filled, semitone_mm, width_scale, layout.notehead_height_scaling, layout.notehead_tilt)
         next_start_index = bisect_left(starts_by_hand[hand], end_tick)
         has_following_note = (
             next_start_index != len(starts_by_hand[hand])
@@ -274,6 +326,7 @@ def build_stave_render_data(
         dot_centres = tuple(
             (x_mm, y_for_tick(tick) + semitone_mm)
             for tick in sorted(dot_ticks)
+            if visual_start_tick < tick < end_tick
         )
         head_xs = [point[0] for point in head.points_mm]
         head_ys = [point[1] for point in head.points_mm]
@@ -284,8 +337,8 @@ def build_stave_render_data(
         color = _color_from_string(note.color, layout.note_midinote_left_color if hand == "left" else layout.note_midinote_right_color)
         geometries.append(NoteGeometry(
             note.id,
-            start_tick,
-            end_tick,
+            visual_start_tick,
+            visual_end_tick,
             hand,
             note.continues_from_previous,
             note.continues_to_next,
@@ -295,7 +348,7 @@ def build_stave_render_data(
             layout.engraving_mm(layout.note_stem_thickness_mm, stave.scale),
             layout.engraving_mm(layout.note_stem_thickness_mm, stave.scale),
             layout.engraving_mm(layout.note_stopsign_thickness_mm, stave.scale),
-            (x_mm, y_start_mm, stem_tip_mm, y_start_mm),
+            (x_mm, y_start_mm, x_mm, y_start_mm) if note.id in arpeggio_member_ids else (x_mm, y_start_mm, stem_tip_mm, y_start_mm),
             None,
             stop_points,
             dot_centres,
@@ -306,7 +359,7 @@ def build_stave_render_data(
     chord_interior_ids: set[str] = set()
     chord_comparison = Operator(SHORTEST_DURATION)
     for hand in ("left", "right"):
-        hand_notes = [note for note in geometries if note.hand == hand]
+        hand_notes = [note for note in geometries if note.hand == hand and note.event_id not in arpeggio_member_ids]
         chord_groups: list[list[NoteGeometry]] = []
         for note in hand_notes:
             if chord_groups and chord_comparison.eq(note.start_tick, chord_groups[-1][0].start_tick):
@@ -343,6 +396,7 @@ def build_stave_render_data(
                 note for note in geometries
                 if note.hand == hand
                 and note.event_id not in chord_interior_ids
+                and note.event_id not in arpeggio_member_ids
                 and window_start <= note.start_tick < window_end
             ]
             if len(members) < 2:

@@ -16,7 +16,8 @@ from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QCursor, QImage, QKeySequence, QPainter, QPainterPath, QPalette, QPen, QPolygonF
 from PySide6.QtWidgets import QInputDialog, QMenu, QWidget
 
-from keytab2_model import KeyTab2Document, NoteEvent, SlurEvent, Stave, TempoEvent
+from keytab2_model import ArpeggioEvent, KeyTab2Document, NoteEvent, SlurEvent, Stave, TempoEvent
+from ui.drawers.arpeggio_drawer import ArpeggioDrawer
 from keytab2_model.base_grid import grid_boundaries, grid_line_boundaries
 from ui.drawers.grid_drawer import GridDrawer
 from ui.drawers.beam_drawer import BeamDrawer
@@ -31,7 +32,7 @@ from ui.drawers.stave_connector_drawer import StaveConnectorDrawer
 from ui.drawers.time_signature_drawer import TimeSignatureDrawer
 from ui.dialogs.stave_dialogs import StaveRangeDialog, StavesDialog
 from ui.render_cache import NoteGeometry, StaveRenderData, build_stave_render_data
-from ui.tools import NoteTool, SlurTool, SystemBreakTool, TempoTool, TimeSignatureTool, ToolManager
+from ui.tools import ArpeggioTool, NoteTool, SlurTool, SystemBreakTool, TempoTool, TimeSignatureTool, ToolManager
 from utils.CONSTANT import SHORTEST_DURATION, SLUR_SEGMENT_COUNT
 from utils.operator import Operator
 
@@ -83,11 +84,13 @@ class PaperCanvas(QWidget):
         self._control_target: tuple[str, str] | None = None
         self._tool_manager = ToolManager(self)
         self._note_tool = NoteTool()
+        self._arpeggio_tool = ArpeggioTool()
         self._slur_tool = SlurTool()
         self._system_break_tool = SystemBreakTool()
         self._tempo_tool = TempoTool()
         self._time_signature_tool = TimeSignatureTool()
         self._tool_manager.register(self._note_tool)
+        self._tool_manager.register(self._arpeggio_tool)
         self._tool_manager.register(self._slur_tool)
         self._tool_manager.register(self._system_break_tool)
         self._tool_manager.register(self._tempo_tool)
@@ -370,6 +373,7 @@ class PaperCanvas(QWidget):
         stave_connector_drawer = StaveConnectorDrawer(context, self.INK_COLOR, command_buffer)
         time_signature_drawer = TimeSignatureDrawer(context, self.INK_COLOR, command_buffer)
         note_drawer = NoteDrawer(context, self.INK_COLOR, command_buffer)
+        arpeggio_drawer = ArpeggioDrawer(context, self.INK_COLOR, command_buffer)
         beam_drawer = BeamDrawer(context, self.INK_COLOR, command_buffer)
         slur_drawer = SlurDrawer(context, self.INK_COLOR, command_buffer)
         tempo_drawer = TempoDrawer(context, self.INK_COLOR, command_buffer)
@@ -378,7 +382,7 @@ class PaperCanvas(QWidget):
         for system in page.systems:
             if not self._system_intersects_render_region(page, system, visible_left_mm, visible_right_mm, visible_top_mm, visible_bottom_mm, include_editor_controls):
                 continue
-            self._draw_system(grid_drawer, snap_drawer, stave_drawer, stave_connector_drawer, time_signature_drawer, note_drawer, beam_drawer, slur_drawer, tempo_drawer, page, system, self._system_column_bounds(page, system), visible_top_mm, visible_bottom_mm, include_snap_bands, include_midi_only_ledgers, include_editor_controls, system is final_system, slur_segment_count)
+            self._draw_system(grid_drawer, snap_drawer, stave_drawer, stave_connector_drawer, time_signature_drawer, note_drawer, beam_drawer, arpeggio_drawer, slur_drawer, tempo_drawer, page, system, self._system_column_bounds(page, system), visible_top_mm, visible_bottom_mm, include_snap_bands, include_midi_only_ledgers, include_editor_controls, system is final_system, slur_segment_count)
         command_buffer.flush()
 
     def _draw_page_metadata(
@@ -456,7 +460,7 @@ class PaperCanvas(QWidget):
             and system_top_mm <= visible_bottom_mm
         )
 
-    def _draw_system(self, grid_drawer: GridDrawer, snap_drawer: SnapDrawer, stave_drawer: StaveDrawer, stave_connector_drawer: StaveConnectorDrawer, time_signature_drawer: TimeSignatureDrawer, note_drawer: NoteDrawer, beam_drawer: BeamDrawer, slur_drawer: SlurDrawer, tempo_drawer: TempoDrawer, page, system, column_bounds: tuple[float, float], visible_top_mm: float, visible_bottom_mm: float, include_snap_bands: bool, include_midi_only_ledgers: bool, include_editor_controls: bool, is_final_system: bool, slur_segment_count: int) -> None:
+    def _draw_system(self, grid_drawer: GridDrawer, snap_drawer: SnapDrawer, stave_drawer: StaveDrawer, stave_connector_drawer: StaveConnectorDrawer, time_signature_drawer: TimeSignatureDrawer, note_drawer: NoteDrawer, beam_drawer: BeamDrawer, arpeggio_drawer: ArpeggioDrawer, slur_drawer: SlurDrawer, tempo_drawer: TempoDrawer, page, system, column_bounds: tuple[float, float], visible_top_mm: float, visible_bottom_mm: float, include_snap_bands: bool, include_midi_only_ledgers: bool, include_editor_controls: bool, is_final_system: bool, slur_segment_count: int) -> None:
         stave_left_positions = self._centered_stave_left_positions(system, stave_drawer, self._document.layout, *column_bounds)
         natural_stave_bounds = [
             stave_drawer.bounds(stave, self._document.layout, left_mm)
@@ -506,7 +510,39 @@ class PaperCanvas(QWidget):
             if include_snap_bands:
                 snap_drawer.draw(system, *stave_natural_bounds, self.input_snap_ticks, measure_starts)
             is_last_stave = stave_index == len(system.staves) - 1
-            grid_drawer.draw(system, self._document.layout, stave.scale, *stave_natural_bounds, measure_starts, grid_starts, metric, render_data.collision_index, is_final_system, is_last_stave, measure_number_right_edges if is_last_stave else None)
+            barline_gaps_by_tick: dict[int, list[tuple[float, float]]] = {}
+            arpeggio_clearance_mm = self._document.layout.engraving_mm(2.0, stave.scale)
+            for arpeggio in (event for event in stave.events if isinstance(event, ArpeggioEvent)):
+                if (
+                    arpeggio.rtime1_ticks == arpeggio.rtime2_ticks == 0
+                    or arpeggio.start_tick not in measure_starts
+                ):
+                    continue
+                member_geometries = [
+                    geometry
+                    for note_id in arpeggio.note_ids
+                    if (geometry := next((item for item in render_data.notes.geometries if item.event_id == note_id), None)) is not None
+                ]
+                if len(member_geometries) < 2:
+                    continue
+                head_xs = [x_mm for geometry in member_geometries for x_mm, _y_mm in geometry.head.points_mm]
+                barline_gaps_by_tick.setdefault(arpeggio.start_tick, []).append(
+                    (min(head_xs) - arpeggio_clearance_mm, max(head_xs) + arpeggio_clearance_mm)
+                )
+            grid_drawer.draw(
+                system,
+                self._document.layout,
+                stave.scale,
+                *stave_natural_bounds,
+                measure_starts,
+                grid_starts,
+                metric,
+                render_data.collision_index,
+                is_final_system,
+                is_last_stave,
+                measure_number_right_edges if is_last_stave else None,
+                {tick: tuple(intervals) for tick, intervals in barline_gaps_by_tick.items()},
+            )
             if is_last_stave and self._document.layout.tempo_indicator_visible:
                 for tempo in (event for event in self._document.timeline_events if isinstance(event, TempoEvent) and system.start_tick <= event.start_tick < system.end_tick):
                     top_start_x_mm = stave_natural_bounds[1]
@@ -552,6 +588,34 @@ class PaperCanvas(QWidget):
             if self._document.layout.beam_visible:
                 for beam in render_data.beams_in_tick_range(visible_start_tick, visible_end_tick):
                     beam_drawer.draw(beam, stem_width_mm, beam_corner_radius_mm)
+            for arpeggio in (event for event in stave.events if isinstance(event, ArpeggioEvent)):
+                if arpeggio.rtime1_ticks == arpeggio.rtime2_ticks == 0:
+                    continue
+                members = self._document.arpeggio_members(stave, arpeggio)
+                if len(members) < 2 or not system.start_tick <= arpeggio.start_tick < system.end_tick:
+                    continue
+                geometry_by_id = {geometry.event_id: geometry for geometry in render_data.notes.geometries}
+                low_geometry = geometry_by_id.get(members[0].id)
+                high_geometry = geometry_by_id.get(members[-1].id)
+                if low_geometry is None or high_geometry is None:
+                    continue
+                anchor_geometry, opposite_geometry = (high_geometry, low_geometry) if arpeggio.hand == "left" else (low_geometry, high_geometry)
+                slope = (high_geometry.stem[1] - low_geometry.stem[1]) / (high_geometry.stem[0] - low_geometry.stem[0])
+
+                def support_point(geometry):
+                    is_up = max(y_mm for _, y_mm in geometry.head.points_mm) - geometry.stem[1] < 1e-6
+                    points = geometry.head.points_mm
+                    return (max if is_up else min)(points, key=lambda point: point[1] - slope * point[0])
+
+                arpeggio_drawer.draw(
+                    support_point(anchor_geometry),
+                    support_point(opposite_geometry),
+                    stem_width_mm,
+                    self._document.layout.engraving_mm(
+                        2.0 * self._document.layout.note_stem_length_semitone,
+                        stave.scale,
+                    ),
+                )
             if self._document.layout.slur_visible:
                 semitone_mm = self._document.layout.engraving_mm(2.0, stave.scale)
                 for slur in (event for event in stave.events if isinstance(event, SlurEvent)):
@@ -695,6 +759,9 @@ class PaperCanvas(QWidget):
         if self._tool_manager.active_tool is self._slur_tool:
             self._draw_slur_handle_overlay(painter, exposed_rect)
             return
+        if self._tool_manager.active_tool is self._arpeggio_tool:
+            self._draw_arpeggio_handle_overlay(painter, exposed_rect)
+            return
         drag_preview = self._note_tool.drag_preview
         if drag_preview is not None:
             stave = drag_preview.stave
@@ -826,6 +893,19 @@ class PaperCanvas(QWidget):
                 painter.setPen(QPen(accent, max(1, round(self.pixels_per_mm * 0.35)), Qt.PenStyle.DashLine))
         finally:
             painter.restore()
+
+    def _draw_arpeggio_handle_overlay(self, painter: QPainter, exposed_rect: QRect) -> None:
+        radius_px = max(4, round(self.pixels_per_mm * 1.25))
+        painter.save()
+        handle_color = QColor(190, 35, 35, 144)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(handle_color)
+        for _arpeggio, points in self._arpeggio_tool.visible_handles():
+            for x_mm, y_mm in points:
+                point = QPointF(x_mm * self.pixels_per_mm, y_mm * self.pixels_per_mm)
+                if QRectF(point.x() - radius_px, point.y() - radius_px, radius_px * 2, radius_px * 2).intersects(QRectF(exposed_rect)):
+                    painter.drawEllipse(point, radius_px, radius_px)
+        painter.restore()
 
     def _draw_duration_preview(self, painter: QPainter, edit) -> None:
         """Draw a resize-only note body without rebuilding beams or continuation dots."""
@@ -1266,6 +1346,7 @@ class PaperCanvas(QWidget):
                         if event.id not in self._selected_note_ids and event.id not in self._selected_slur_ids
                     ]
                     if len(stave.events) != original_count:
+                        self._document.normalize_stave_arpeggios(stave)
                         stave.touch()
                         system.touch()
                         changed = True
@@ -1629,6 +1710,10 @@ class PaperCanvas(QWidget):
         if not isinstance(slur_tool, SlurTool):
             raise RuntimeError("Registered slur tool has an unexpected type")
         slur_tool.set_hand(hand)
+        self.update()
+
+    def select_arpeggio_mode(self) -> None:
+        self._tool_manager.activate(ArpeggioTool.TOOL_NAME)
         self.update()
 
     def set_input_snap_ticks(self, snap_ticks: float) -> None:

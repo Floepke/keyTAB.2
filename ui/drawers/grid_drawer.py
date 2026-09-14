@@ -12,15 +12,16 @@ from ui.render_cache import MeasureCollisionIndex
 
 
 class GridDrawer(DrawerBase):
-    def draw(self, system: System, layout: Layout, stave_scale: float, left_mm: float, right_mm: float, measure_starts: tuple[int, ...], group_starts: tuple[int, ...], metrics: SystemMetrics, collision_index: MeasureCollisionIndex | None = None, is_final_system: bool = False, show_measure_numbers: bool = True, measure_number_right_edges: dict[int, float] | None = None) -> None:
+    def draw(self, system: System, layout: Layout, stave_scale: float, left_mm: float, right_mm: float, measure_starts: tuple[int, ...], group_starts: tuple[int, ...], metrics: SystemMetrics, collision_index: MeasureCollisionIndex | None = None, is_final_system: bool = False, show_measure_numbers: bool = True, measure_number_right_edges: dict[int, float] | None = None, barline_gaps_by_tick: dict[int, tuple[tuple[float, float], ...]] | None = None) -> None:
         tick_height = system.height_mm / (system.end_tick - system.start_tick)
         measure_font = layout.measure_numbering_font
         measure_size_mm = layout.engraving_pt_to_mm(measure_font.size_pt, stave_scale)
         visible_measure_starts = [tick for tick in measure_starts if system.start_tick <= tick < system.end_tick]
 
-        def draw_line_with_gaps(y_mm: float, width_mm: float, tags: tuple[str, ...], dash_pattern_mm: list[float] | None = None) -> None:
+        def draw_line_with_gaps(y_mm: float, width_mm: float, tags: tuple[str, ...], dash_pattern_mm: list[float] | None = None, extra_intervals: tuple[tuple[float, float], ...] = ()) -> None:
             visual_gap_mm = layout.engraving_mm(2.0, stave_scale)
-            intervals = collision_index.horizontal_occlusion_intervals(y_mm, visual_gap_mm + width_mm * 0.5) if collision_index else ()
+            collision_intervals = collision_index.horizontal_occlusion_intervals(y_mm, visual_gap_mm + width_mm * 0.5) if collision_index else ()
+            intervals = tuple(sorted((*collision_intervals, *extra_intervals)))
             cursor_mm = left_mm
             for gap_start_mm, gap_end_mm in intervals:
                 if gap_start_mm > cursor_mm:
@@ -35,7 +36,12 @@ class GridDrawer(DrawerBase):
             x_bearing_mm, y_bearing_mm, text_width_mm, text_height_mm = self.text_extents(measure_text, measure_size_mm, measure_font)
             text_top_mm = y_mm + metrics.barline_width_mm * 0.5 + 1.0
             baseline_mm = text_top_mm - y_bearing_mm
-            draw_line_with_gaps(y_mm, metrics.barline_width_mm, ("grid_barline",))
+            draw_line_with_gaps(
+                y_mm,
+                metrics.barline_width_mm,
+                ("grid_barline",),
+                extra_intervals=(barline_gaps_by_tick or {}).get(tick, ()),
+            )
             if show_measure_numbers and layout.measure_numbers_visible:
                 text_left_mm = right_mm + metrics.measure_number_offset_mm
                 beam_right_mm = collision_index.beam_right_extent_in_rect(

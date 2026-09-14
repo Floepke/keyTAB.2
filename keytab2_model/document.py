@@ -10,7 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from keytab2_model.base_grid import BaseGrid, grid_boundaries, total_duration
-from keytab2_model.events import BeamEvent, EVENT_TYPES, Event, LineOwnedEvent, NoteEvent, PageEvent, StaveEvent, TempoEvent, TimelineEvent
+from keytab2_model.events import ArpeggioEvent, BeamEvent, EVENT_TYPES, Event, LineOwnedEvent, NoteEvent, PageEvent, StaveEvent, TempoEvent, TimelineEvent
 from keytab2_model.font import Font
 from keytab2_model.layout import Layout
 
@@ -234,6 +234,49 @@ class KeyTab2Document:
                 for stave in system["staves"]:
                     stave.pop("revision", None)
         return data
+
+    @staticmethod
+    def arpeggio_members(stave: Stave, arpeggio: ArpeggioEvent) -> list[NoteEvent]:
+        """Return the live notes referenced by an arpeggio in their pitch order."""
+        by_id = {event.id: event for event in stave.events if isinstance(event, NoteEvent)}
+        return sorted(
+            (by_id[note_id] for note_id in arpeggio.note_ids if note_id in by_id),
+            key=lambda note: note.pitch,
+        )
+
+    @staticmethod
+    def normalize_stave_arpeggios(stave: Stave) -> bool:
+        """Keep arpeggio memberships valid after loading or a note edit."""
+        notes = [event for event in stave.events if isinstance(event, NoteEvent)]
+        by_id = {note.id: note for note in notes}
+        changed = False
+        retained = []
+        for event in stave.events:
+            if not isinstance(event, ArpeggioEvent):
+                retained.append(event)
+                continue
+            members = [by_id[note_id] for note_id in event.note_ids if note_id in by_id]
+            if not members and event.note_pitches:
+                members = [
+                    note for note in notes
+                    if note.time == event.start_tick
+                    and note.hand == event.hand
+                    and note.pitch in event.note_pitches
+                ]
+            members = [note for note in members if note.time == event.start_tick and note.hand == event.hand]
+            if len(members) < 2:
+                changed = True
+                continue
+            member_ids = [note.id for note in sorted(members, key=lambda note: note.pitch)]
+            pitches = [note.pitch for note in sorted(members, key=lambda note: note.pitch)]
+            if event.note_ids != member_ids or event.note_pitches != pitches:
+                event.note_ids = member_ids
+                event.note_pitches = pitches
+                changed = True
+            retained.append(event)
+        if len(retained) != len(stave.events):
+            stave.events[:] = retained
+        return changed
 
     def split_system_at(self, page_id: str, system_id: str, time: int) -> System:
         """Split one system at a barline and return the new following system."""
@@ -667,6 +710,10 @@ class KeyTab2Document:
         )
         document._ensure_unique_event_ids()
         document._repair_unlinked_continuation_ids()
+        for page in document.pages:
+            for system in page.systems:
+                for stave in system.staves:
+                    document.normalize_stave_arpeggios(stave)
         document.repaginate_document()
         return document
 
