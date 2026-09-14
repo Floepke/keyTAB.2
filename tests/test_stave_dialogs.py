@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from PySide6.QtCore import QSize
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 
 from keytab2_model import KeyTab2Document, NoteEvent, Stave
 from ui.dialogs.stave_dialogs import StaveRangeVisualizer, StavesDialog
@@ -32,6 +32,16 @@ class StaveDialogsTests(unittest.TestCase):
         dialog = StavesDialog(staves)
 
         self.assertEqual([stave.id for stave in dialog.staves], [stave.id for stave in staves])
+
+    def test_staves_dialog_explains_that_set_controls_are_global(self) -> None:
+        dialog = StavesDialog([Stave(name="Upper")])
+
+        labels = [label.text() for label in dialog.findChildren(QLabel)]
+
+        self.assertIn(
+            "These settings apply globally to every system and overwrite local page adjustments.",
+            labels,
+        )
 
     def test_staves_dialog_action_icons_use_dark_button_text(self) -> None:
         dialog = StavesDialog([Stave(name="Upper")])

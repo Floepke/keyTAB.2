@@ -145,6 +145,18 @@ class MeasureCollisionIndex:
         ]
         return max(overlapping, default=None)
 
+    def right_extent_in_rect(self, left_mm: float, top_mm: float, right_mm: float, bottom_mm: float) -> float | None:
+        """Return the furthest notation edge intersecting an annotation rectangle."""
+        overlapping = [
+            geometry.right_extent_mm
+            for geometry in self._geometries.geometries
+            if geometry.bounds_mm[0] <= right_mm
+            and geometry.bounds_mm[2] >= left_mm
+            and geometry.bounds_mm[1] <= bottom_mm
+            and geometry.bounds_mm[3] >= top_mm
+        ]
+        return max(overlapping, default=None)
+
     def horizontal_occlusion_intervals(self, y_mm: float, padding_mm: float = 0.0) -> tuple[tuple[float, float], ...]:
         """Return merged x intervals occupied by rendered notation at one y."""
         intervals: list[tuple[float, float]] = []

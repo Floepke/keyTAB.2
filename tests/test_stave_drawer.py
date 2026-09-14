@@ -389,6 +389,27 @@ class StaveDrawerTests(unittest.TestCase):
         )
         collision_index.beam_right_extent_in_rect.assert_called_once_with(33.25, 21.3125, 38.25, 25.3125)
 
+    def test_measure_number_moves_past_an_overlapping_ledger_line(self) -> None:
+        context = Mock()
+        context.text_extents.return_value = (0.0, -3.0, 5.0, 4.0, 5.0, 0.0)
+        layout = Layout(scale=0.5)
+        metrics = SystemMetrics.from_layout(layout)
+        system = System(start_tick=0, end_tick=1024, top_mm=20.0, height_mm=40.0)
+
+        GridDrawer(context, (0.0, 0.0, 0.0)).draw(
+            system,
+            layout,
+            1.0,
+            10.0,
+            30.0,
+            (0, 1024),
+            (),
+            metrics,
+            ledger_segments=((40.0, 21.0, 27.0, 1.0, [], None),),
+        )
+
+        self.assertIn(unittest.mock.call(43.75, 24.3125), context.move_to.call_args_list)
+
     def test_system_culling_includes_controls_and_excludes_distant_systems(self) -> None:
         layout = Layout(scale=0.5)
         metrics = SystemMetrics.from_layout(layout)

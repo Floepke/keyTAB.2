@@ -540,6 +540,19 @@ class PaperCanvas(QWidget):
                 barline_gaps_by_tick.setdefault(arpeggio.start_tick, []).append(
                     (min(head_xs) - arpeggio_clearance_mm, max(head_xs) + arpeggio_clearance_mm)
                 )
+            ledger_segments = stave_drawer.ledger_line_segments(
+                system,
+                stave,
+                self._document.layout,
+                left_mm,
+                {note.event_id: note.continuation_dot_centres_mm for note in render_data.notes.geometries},
+                {
+                    note.event_id: note.stop_points_mm[1]
+                    for note in render_data.notes.geometries
+                    if note.stop_points_mm is not None
+                },
+                include_midi_only_ledgers,
+            )
             grid_drawer.draw(
                 system,
                 self._document.layout,
@@ -553,15 +566,22 @@ class PaperCanvas(QWidget):
                 is_last_stave,
                 measure_number_right_edges if is_last_stave else None,
                 {tick: tuple(intervals) for tick, intervals in barline_gaps_by_tick.items()},
+                ledger_segments,
             )
             if is_last_stave and self._document.layout.tempo_indicator_visible:
                 for tempo in (event for event in self._document.timeline_events if isinstance(event, TempoEvent) and system.start_tick <= event.start_tick < system.end_tick):
                     top_start_x_mm = stave_natural_bounds[1]
-                    text_left_x_mm, start_y_mm = self._tempo_marker_position(system, top_start_x_mm, tempo)
-                    text_left_x_mm = max(text_left_x_mm, measure_number_right_edges.get(tempo.start_tick, text_left_x_mm - 1.0) + 1.0)
+                    text_left_x_mm, start_y_mm = self._tempo_marker_position(
+                        system,
+                        top_start_x_mm,
+                        tempo,
+                        render_data.collision_index,
+                        stave.scale,
+                        measure_number_right_edges.get(tempo.start_tick),
+                    )
                     tempo_drawer.draw(
                         tempo,
-                        top_start_x_mm,
+                        text_left_x_mm,
                         text_left_x_mm,
                         start_y_mm,
                         self._time_to_y_mm(system, min(system.end_tick, tempo.start_tick + tempo.duration_ticks)),
@@ -1546,9 +1566,21 @@ class PaperCanvas(QWidget):
                     return "grid", time
         return None
 
-    def _tempo_marker_position(self, system, right_outer_stave_x_mm: float, tempo: TempoEvent) -> tuple[float, float]:
+    def _tempo_marker_position(self, system, right_outer_stave_x_mm: float, tempo: TempoEvent, collision_index=None, stave_scale: float = 1.0, measure_number_right_edge_mm: float | None = None) -> tuple[float, float]:
+        start_tick = max(system.start_tick, tempo.start_tick)
+        end_tick = min(system.end_tick, tempo.start_tick + tempo.duration_ticks)
+        text_left_x_mm = right_outer_stave_x_mm + tempo.x_offset_mm
+        if collision_index is not None and end_tick > start_tick:
+            notation_right_mm = collision_index.right_extent_mm(start_tick, end_tick, float("-inf"))
+            if notation_right_mm != float("-inf"):
+                text_left_x_mm = max(text_left_x_mm, notation_right_mm + self._document.layout.engraving_mm(1.0, stave_scale))
+        if measure_number_right_edge_mm is not None:
+            text_left_x_mm = max(
+                text_left_x_mm,
+                measure_number_right_edge_mm + self._document.layout.engraving_mm(1.0, stave_scale),
+            )
         return (
-            right_outer_stave_x_mm + tempo.x_offset_mm,
+            text_left_x_mm,
             self._time_to_y_mm(system, tempo.start_tick),
         )
 
@@ -1564,13 +1596,20 @@ class PaperCanvas(QWidget):
                 continue
             right_outer_stave_x_mm = bounds[1]
             size_mm = self._document.layout.engraving_pt_to_mm(self._document.layout.tempo_font.size_pt, last_stave.scale)
+            render_data = self._stave_render_data(system, last_stave, last_left_mm)
             for tempo in (event for event in self._document.timeline_events if isinstance(event, TempoEvent)):
                 if not system.start_tick <= tempo.start_tick < system.end_tick:
                     continue
-                text_left_x_mm, start_y_mm = self._tempo_marker_position(system, right_outer_stave_x_mm, tempo)
+                text_left_x_mm, start_y_mm = self._tempo_marker_position(
+                    system,
+                    right_outer_stave_x_mm,
+                    tempo,
+                    render_data.collision_index,
+                    last_stave.scale,
+                )
                 end_y_mm = self._time_to_y_mm(system, min(system.end_tick, tempo.start_tick + tempo.duration_ticks))
                 if (
-                    right_outer_stave_x_mm - size_mm <= point_mm.x() <= text_left_x_mm + size_mm * 4.0
+                    text_left_x_mm - size_mm <= point_mm.x() <= text_left_x_mm + size_mm * 4.0
                     and start_y_mm - size_mm <= point_mm.y() <= end_y_mm + size_mm
                 ):
                     return tempo

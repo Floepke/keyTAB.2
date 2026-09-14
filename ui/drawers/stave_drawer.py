@@ -78,8 +78,43 @@ class StaveDrawer(DrawerBase):
             line_width, dash_pattern, color = self._line_style(pitch, layout, effective_scale)
             self.draw_line(x_mm, top_mm, x_mm, bottom_mm, line_width, dash_pattern_mm=dash_pattern, tags=("stave_line",))
 
+        for x_mm, start_y_mm, end_y_mm, line_width, dash_pattern, color in self.ledger_line_segments(
+            system,
+            stave,
+            layout,
+            left_mm,
+            continuation_dot_centres,
+            stop_centres,
+            include_midi_only_ledgers,
+        ):
+            self.draw_line(
+                x_mm,
+                start_y_mm,
+                x_mm,
+                end_y_mm,
+                line_width,
+                color=color,
+                dash_pattern_mm=dash_pattern,
+                tags=("stave_line",),
+            )
+
+    def ledger_line_segments(
+        self,
+        system: System,
+        stave: Stave,
+        layout: Layout,
+        left_mm: float,
+        continuation_dot_centres: dict[str, tuple[tuple[float, float], ...]] | None = None,
+        stop_centres: dict[str, tuple[float, float]] | None = None,
+        include_midi_only_ledgers: bool = True,
+    ) -> tuple[tuple[float, float, float, float, list[float], tuple[float, float, float] | None], ...]:
+        """Return final-mm ledger segments for drawing and annotation collision checks."""
+        low_pitch, _ = stave.pitch_range
+        effective_scale = self.effective_scale(layout, stave)
+        semitone_mm = 2.0 * effective_scale
         ledger_length_mm = layout.stave_ledger_line_length_mm * effective_scale
         drawn_ledgers: set[tuple[int, float]] = set()
+        segments: list[tuple[float, float, float, float, list[float], tuple[float, float, float] | None]] = []
         for event in stave.events:
             if not isinstance(event, NoteEvent) or event.time >= system.end_tick or event.time + event.duration <= system.start_tick:
                 continue
@@ -96,13 +131,14 @@ class StaveDrawer(DrawerBase):
                     drawn_ledgers.add(signature)
                     x_mm = self.pitch_to_x_mm(pitch, low_pitch, left_mm, semitone_mm)
                     line_width, dash_pattern, _ = self._line_style(pitch, layout, effective_scale)
-                    self.draw_line(
-                        x_mm,
-                        y_center_mm - 3.0 * semitone_mm,
-                        x_mm,
-                        y_center_mm - 3.0 * semitone_mm + ledger_length_mm,
-                        line_width,
-                        color=self._ledger_color(pitch),
-                        dash_pattern_mm=dash_pattern,
-                        tags=("stave_line",),
+                    segments.append(
+                        (
+                            x_mm,
+                            y_center_mm - 3.0 * semitone_mm,
+                            y_center_mm - 3.0 * semitone_mm + ledger_length_mm,
+                            line_width,
+                            dash_pattern,
+                            self._ledger_color(pitch),
+                        )
                     )
+        return tuple(segments)

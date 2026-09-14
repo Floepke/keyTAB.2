@@ -12,7 +12,7 @@ from ui.render_cache import MeasureCollisionIndex
 
 
 class GridDrawer(DrawerBase):
-    def draw(self, system: System, layout: Layout, stave_scale: float, left_mm: float, right_mm: float, measure_starts: tuple[int, ...], group_starts: tuple[int, ...], metrics: SystemMetrics, collision_index: MeasureCollisionIndex | None = None, is_final_system: bool = False, show_measure_numbers: bool = True, measure_number_right_edges: dict[int, float] | None = None, barline_gaps_by_tick: dict[int, tuple[tuple[float, float], ...]] | None = None) -> None:
+    def draw(self, system: System, layout: Layout, stave_scale: float, left_mm: float, right_mm: float, measure_starts: tuple[int, ...], group_starts: tuple[int, ...], metrics: SystemMetrics, collision_index: MeasureCollisionIndex | None = None, is_final_system: bool = False, show_measure_numbers: bool = True, measure_number_right_edges: dict[int, float] | None = None, barline_gaps_by_tick: dict[int, tuple[tuple[float, float], ...]] | None = None, ledger_segments: tuple[tuple[float, float, float, float, list[float], tuple[float, float, float] | None], ...] = ()) -> None:
         tick_height = system.height_mm / (system.end_tick - system.start_tick)
         measure_font = layout.measure_numbering_font
         measure_size_mm = layout.engraving_pt_to_mm(measure_font.size_pt, stave_scale)
@@ -44,15 +44,25 @@ class GridDrawer(DrawerBase):
             )
             if show_measure_numbers and layout.measure_numbers_visible:
                 text_left_mm = right_mm + metrics.measure_number_offset_mm
-                beam_right_mm = collision_index.beam_right_extent_in_rect(
+                notation_right_mm = collision_index.right_extent_in_rect(
                     text_left_mm + measure_font.x_offset,
                     text_top_mm + measure_font.y_offset,
                     text_left_mm + measure_font.x_offset + text_width_mm,
                     text_top_mm + measure_font.y_offset + text_height_mm,
                 ) if collision_index else None
+                ledger_right_mm = max(
+                    (
+                        x_mm + line_width_mm * 0.5
+                        for x_mm, start_y_mm, end_y_mm, line_width_mm, _dash_pattern, _color in ledger_segments
+                        if start_y_mm <= text_top_mm + measure_font.y_offset + text_height_mm
+                        and end_y_mm >= text_top_mm + measure_font.y_offset
+                    ),
+                    default=None,
+                )
+                occupied_right_mm = max(right_mm, notation_right_mm or right_mm, ledger_right_mm or right_mm)
                 self.draw_text(
                     measure_text,
-                    max(right_mm, beam_right_mm or right_mm) + metrics.measure_number_offset_mm - x_bearing_mm,
+                    occupied_right_mm + metrics.measure_number_offset_mm - x_bearing_mm,
                     baseline_mm,
                     measure_size_mm,
                     measure_font,
@@ -60,7 +70,7 @@ class GridDrawer(DrawerBase):
                 )
                 if measure_number_right_edges is not None:
                     measure_number_right_edges[tick] = (
-                        max(right_mm, beam_right_mm or right_mm)
+                        occupied_right_mm
                         + metrics.measure_number_offset_mm
                         + measure_font.x_offset
                         + text_width_mm
