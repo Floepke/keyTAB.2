@@ -12,11 +12,10 @@ from utils.CONSTANT import SHORTEST_DURATION
 
 
 LEFT_PANEL_PADDING_PX = 6
-SNAP_DOCK_WIDTH_PX = 220
+SNAP_DOCK_WIDTH_PX = 125
 BASE_ITEMS: list[tuple[int, str]] = [
-    (1, "Whole"), (2, "Half"), (4, "Quarter"), (8, "Eighth"),
-    (16, "Sixteenth"), (32, "Thirty-second"),
-    (64, "Sixty-fourth"), (128, "One hundred twenty-eighth"),
+    (1, "1"), (2, "2"), (4, "4"), (8, "8"),
+    (16, "16"), (32, "32"), (64, "64"), (128, "128"),
 ]
 
 
@@ -89,7 +88,7 @@ class SnapSizeSelector(QtWidgets.QWidget):
 
     def _populate_list(self) -> None:
         for base, name in BASE_ITEMS:
-            item = QtWidgets.QListWidgetItem(f"{base} - {name}")
+            item = QtWidgets.QListWidgetItem(name)
             item.setSizeHint(QtCore.QSize(item.sizeHint().width(), 28))
             item.setData(QtCore.Qt.ItemDataRole.UserRole, base)
             self.list.addItem(item)
@@ -103,9 +102,9 @@ class SnapSizeSelector(QtWidgets.QWidget):
             self.minus_btn.setEnabled(self._divide > 1)
 
     def adjust_to_fit(self) -> None:
-        row_heights = sum(max(28, self.list.sizeHintForRow(index)) for index in range(self.list.count()))
+        row_heights = sum(self.list.sizeHintForRow(index) for index in range(self.list.count()))
         self.list.setFixedHeight(row_heights + self.list.frameWidth() * 2)
-        self.setFixedHeight(row_heights + 72)
+        self.setFixedHeight(self.layout().sizeHint().height())
 
     def _emit_changed(self) -> None:
         selected = self.list.selectedItems()
@@ -196,4 +195,4 @@ class SnapSizeDock(QtWidgets.QDockWidget):
 
     def _update_title(self, _base: int | None = None, _divide: int | None = None) -> None:
         fraction = self.selector.get_snap_fraction()
-        self.setWindowTitle(f"Snap Size: {fraction.numerator}/{fraction.denominator} = {self.selector.get_snap_size():.1f}")
+        self.setWindowTitle(f"{fraction.numerator}/{fraction.denominator} = {self.selector.get_snap_size():.1f}")
