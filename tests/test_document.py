@@ -325,7 +325,7 @@ class KeyTab2DocumentTests(unittest.TestCase):
     def test_loading_resolves_legacy_arpeggio_members_to_note_ids(self) -> None:
         document = KeyTab2Document.new()
         stave = document.pages[0].systems[0].staves[0]
-        notes = [NoteEvent(time=256, pitch=pitch, hand="left") for pitch in (60, 64)]
+        notes = [NoteEvent(time=time, pitch=pitch, hand="left") for time, pitch in ((256.0, 60), (256.4, 64))]
         stave.events.extend((*notes, ArpeggioEvent(start_tick=256, note_pitches=[60, 64], hand="left")))
 
         restored = KeyTab2Document.from_dict(document.to_dict())

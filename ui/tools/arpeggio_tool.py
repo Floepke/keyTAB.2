@@ -9,6 +9,8 @@ from PySide6.QtCore import QPointF
 from keytab2_model import ArpeggioEvent, NoteEvent
 from ui.drawers.stave_drawer import StaveDrawer
 from ui.tools.base_tool import BaseTool
+from utils.CONSTANT import SHORTEST_DURATION
+from utils.operator import Operator
 
 
 @dataclass
@@ -43,10 +45,11 @@ class ArpeggioTool(BaseTool):
             if cursor_note is None:
                 return False
             system, stave, note = cursor_note
+        timing_comparison = Operator(SHORTEST_DURATION)
         members = sorted(
             (
                 event for event in stave.events
-                if isinstance(event, NoteEvent) and event.time == note.time and event.hand == note.hand
+                if isinstance(event, NoteEvent) and timing_comparison.eq(event.time, note.time) and event.hand == note.hand
             ),
             key=lambda event: event.pitch,
         )

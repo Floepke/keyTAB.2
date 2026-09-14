@@ -341,6 +341,16 @@ class SelectionTests(unittest.TestCase):
             arpeggio.start_tick + arpeggio.rtime2_ticks,
         )
 
+    def test_arpeggio_mode_groups_fractionally_aligned_chord_notes(self) -> None:
+        self._add_note(60, 256.0)
+        self._add_note(64, 256.4)
+        self.canvas.select_arpeggio_mode()
+
+        self.assertTrue(self.canvas._tool_manager.active_tool.on_left_press(self._point(60, 256)))
+
+        arpeggio = next(event for event in self.stave.events if isinstance(event, ArpeggioEvent))
+        self.assertEqual(arpeggio.note_pitches, [60, 64])
+
     def test_arpeggio_handles_can_move_to_either_side_but_not_the_same_side(self) -> None:
         self._add_note(60, 256)
         self._add_note(64, 256)

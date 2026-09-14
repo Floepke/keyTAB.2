@@ -13,6 +13,8 @@ from keytab2_model.base_grid import BaseGrid, grid_boundaries, total_duration
 from keytab2_model.events import ArpeggioEvent, BeamEvent, EVENT_TYPES, Event, LineOwnedEvent, NoteEvent, PageEvent, StaveEvent, TempoEvent, TimelineEvent
 from keytab2_model.font import Font
 from keytab2_model.layout import Layout
+from utils.CONSTANT import SHORTEST_DURATION
+from utils.operator import Operator
 
 FORMAT_NAME = "keytab2"
 FORMAT_VERSION = 1
@@ -249,6 +251,7 @@ class KeyTab2Document:
         """Keep arpeggio memberships valid after loading or a note edit."""
         notes = [event for event in stave.events if isinstance(event, NoteEvent)]
         by_id = {note.id: note for note in notes}
+        timing_comparison = Operator(SHORTEST_DURATION)
         changed = False
         retained = []
         for event in stave.events:
@@ -259,11 +262,11 @@ class KeyTab2Document:
             if not members and event.note_pitches:
                 members = [
                     note for note in notes
-                    if note.time == event.start_tick
+                    if timing_comparison.eq(note.time, event.start_tick)
                     and note.hand == event.hand
                     and note.pitch in event.note_pitches
                 ]
-            members = [note for note in members if note.time == event.start_tick and note.hand == event.hand]
+            members = [note for note in members if timing_comparison.eq(note.time, event.start_tick) and note.hand == event.hand]
             if len(members) < 2:
                 changed = True
                 continue

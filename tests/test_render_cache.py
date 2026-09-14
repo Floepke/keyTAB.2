@@ -242,6 +242,19 @@ class RenderCacheTests(unittest.TestCase):
         self.assertEqual(len(data.beams.geometries[0].polygon_mm), 4)
         self.assertEqual(len(data.beams.geometries[0].segments_mm), 2)
 
+    def test_nearly_adjacent_fractional_notes_do_not_draw_a_stop(self) -> None:
+        document = KeyTab2Document.new()
+        system = document.pages[0].systems[0]
+        stave = system.staves[0]
+        stave.events.extend([
+            NoteEvent(time=0.0, duration=256.4, pitch=60, hand="left"),
+            NoteEvent(time=256.0, duration=128.0, pitch=64, hand="left"),
+        ])
+
+        data = build_stave_render_data(system, stave, document.layout, 10.0, document.time_per_quarter * 4)
+
+        self.assertIsNone(data.notes.geometries[0].stop_points_mm)
+
     def test_beam_extends_to_a_spanning_note_with_a_continuation_dot(self) -> None:
         document = KeyTab2Document.new()
         system = document.pages[0].systems[0]

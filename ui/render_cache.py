@@ -224,13 +224,14 @@ def build_stave_render_data(
     semitone_mm = layout.engraving_mm(2.0, stave.scale)
     stem_length_mm = semitone_mm * layout.note_stem_length_semitone
     tick_height = system.height_mm / (system.end_tick - system.start_tick)
+    timing_comparison = Operator(SHORTEST_DURATION)
 
     def y_for_tick(tick: int) -> float:
         return system.top_mm + (tick - system.start_tick) * tick_height
 
     def notehead_parameters(note: NoteEvent) -> tuple[str, bool, bool, float]:
         hand = "left" if note.hand == "left" else "right"
-        simultaneous = [other for other in notes if other.time == note.time and other.id != note.id]
+        simultaneous = [other for other in notes if timing_comparison.eq(other.time, note.time) and other.id != note.id]
         has_adjacent_note = any(abs(other.pitch - note.pitch) == 1 for other in simultaneous)
         has_white_chord_note_same_hand = any(
             other.hand == hand and other.pitch % 12 not in {1, 3, 6, 8, 10}
@@ -256,7 +257,7 @@ def build_stave_render_data(
             continue
         members = [notes_by_id[note_id] for note_id in arpeggio.note_ids if note_id in notes_by_id]
         members = sorted(
-            (note for note in members if note.time == arpeggio.start_tick and note.hand == arpeggio.hand),
+            (note for note in members if timing_comparison.eq(note.time, arpeggio.start_tick) and note.hand == arpeggio.hand),
             key=lambda note: note.pitch,
         )
         if len(members) < 2:
@@ -320,11 +321,11 @@ def build_stave_render_data(
         body_points = ((x_mm, y_start_mm), (x_mm - semitone_mm, y_start_mm + semitone_mm), (x_mm - semitone_mm, y_end_mm), (x_mm + semitone_mm, y_end_mm), (x_mm + semitone_mm, y_start_mm + semitone_mm))
         form, is_up, filled, width_scale = notehead_parameters(note)
         head = build_notehead_outline(x_mm, y_start_mm, hand, form, is_up, filled, semitone_mm, width_scale, layout.notehead_height_scaling, layout.notehead_tilt)
-        next_start_index = bisect_left(starts_by_hand[hand], end_tick)
+        next_start_index = bisect_left(starts_by_hand[hand], end_tick - timing_comparison.threshold)
         has_following_note = (
             next_start_index != len(starts_by_hand[hand])
-            and starts_by_hand[hand][next_start_index] == end_tick
-        ) or any(start_tick == end_tick for start_tick in following_starts_by_hand.get(hand, ()))
+            and timing_comparison.eq(starts_by_hand[hand][next_start_index], end_tick)
+        ) or any(timing_comparison.eq(start_tick, end_tick) for start_tick in following_starts_by_hand.get(hand, ()))
         stop_points = None
         if not note.continues_to_next and not has_following_note:
             head_width_mm = max(point[0] for point in head.points_mm) - min(point[0] for point in head.points_mm)
@@ -369,12 +370,11 @@ def build_stave_render_data(
         ))
 
     chord_interior_ids: set[str] = set()
-    chord_comparison = Operator(SHORTEST_DURATION)
     for hand in ("left", "right"):
         hand_notes = [note for note in geometries if note.hand == hand and note.event_id not in arpeggio_member_ids]
         chord_groups: list[list[NoteGeometry]] = []
         for note in hand_notes:
-            if chord_groups and chord_comparison.eq(note.start_tick, chord_groups[-1][0].start_tick):
+            if chord_groups and timing_comparison.eq(note.start_tick, chord_groups[-1][0].start_tick):
                 chord_groups[-1].append(note)
             else:
                 chord_groups.append([note])
