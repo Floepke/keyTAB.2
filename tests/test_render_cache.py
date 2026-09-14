@@ -67,7 +67,7 @@ class RenderCacheTests(unittest.TestCase):
         canvas = PaperCanvas(document)
 
         first_context = unittest.mock.Mock()
-        first_context.text_extents.return_value = (0.0, -3.0, 10.0, 5.0, 0.0, 0.0)
+        first_context.text_extents.return_value = (2.0, -3.0, 10.0, 5.0, 0.0, 0.0)
         first_commands = DrawCommandBuffer()
         canvas._draw_page_metadata(
             DrawerBase(first_context, canvas.INK_COLOR, first_commands),
@@ -97,7 +97,7 @@ class RenderCacheTests(unittest.TestCase):
         self.assertEqual(first_context.show_text.call_args_list[1].args[0], "J. S. Bach")
         self.assertIn("Page 1 of 2 - Prelude - Public domain", first_context.show_text.call_args_list[2].args[0])
         self.assertIn(unittest.mock.call(10.0, 13.0), first_context.move_to.call_args_list)
-        self.assertIn(unittest.mock.call(35.0, 13.0), first_context.move_to.call_args_list)
+        self.assertIn(unittest.mock.call(33.0, 13.0), first_context.move_to.call_args_list)
         self.assertEqual(later_context.show_text.call_count, 1)
         self.assertEqual(later_context.show_text.call_args.args[0], "Page 2 of 2 - Prelude - Public domain")
     @classmethod

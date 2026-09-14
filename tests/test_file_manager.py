@@ -12,6 +12,32 @@ from midi_importer import load_midi
 
 
 class FileManagerTests(unittest.TestCase):
+    def test_new_loads_the_saved_default_template_without_setting_a_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            template_path = Path(directory) / "__default__.keytab2"
+            manager = FileManager()
+            manager.document.score_info.title = "My template"
+            manager.document.pages[0].systems[0].staves[0].events.append(NoteEvent(time=256, duration=128, pitch=60))
+
+            with patch.object(FileManager, "DEFAULT_TEMPLATE_PATH", template_path):
+                self.assertTrue(manager.set_default_template())
+                template_document = manager.new()
+
+            self.assertEqual(template_document.score_info.title, "My template")
+            self.assertEqual(template_document.pages[0].systems[0].staves[0].events[0].pitch, 60)
+            self.assertIsNone(manager.path)
+
+    def test_reset_default_template_removes_the_saved_template(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            template_path = Path(directory) / "__default__.keytab2"
+            KeyTab2Document.new().save(template_path)
+            manager = FileManager()
+
+            with patch.object(FileManager, "DEFAULT_TEMPLATE_PATH", template_path):
+                self.assertTrue(manager.reset_default_template())
+
+            self.assertFalse(template_path.exists())
+
     def test_restores_last_opened_document_before_session_backup(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             last_path = Path(directory) / "last.keytab2"

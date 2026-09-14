@@ -416,15 +416,26 @@ class PaperCanvas(QWidget):
                 )
             if composer:
                 size_mm = layout.engraving_pt_to_mm(layout.font_composer.size_pt)
-                _, composer_y_bearing_mm, width_mm, _ = drawer.text_extents(composer, size_mm, layout.font_composer)
+                composer_x_bearing_mm, composer_y_bearing_mm, width_mm, _ = drawer.text_extents(composer, size_mm, layout.font_composer)
+                composer_x_mm = right_mm - composer_x_bearing_mm - width_mm
+                composer_y_mm = layout.page_top_margin_mm - composer_y_bearing_mm
                 drawer.draw_text(
                     composer,
-                    right_mm - width_mm,
-                    layout.page_top_margin_mm - composer_y_bearing_mm,
+                    composer_x_mm,
+                    composer_y_mm,
                     size_mm,
                     layout.font_composer,
                     tags=("composer",),
                 )
+                if layout.font_composer.underline:
+                    drawer.draw_line(
+                        composer_x_mm,
+                        layout.page_top_margin_mm + max(0.2, size_mm * 0.025),
+                        composer_x_mm + width_mm,
+                        layout.page_top_margin_mm + max(0.2, size_mm * 0.025),
+                        width_mm=max(0.2, size_mm * (0.04 if layout.font_composer.bold else 0.02)),
+                        tags=("composer",),
+                    )
         footer_top_mm = page.height_mm - layout.page_bottom_margin_mm - layout.footer_height_mm
         if visible_top_mm <= page.height_mm and visible_bottom_mm >= footer_top_mm:
             title = info.title.strip() or "Untitled"

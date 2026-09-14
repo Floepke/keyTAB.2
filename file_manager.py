@@ -20,6 +20,7 @@ class FileManager:
     MIDI_FILE_FILTER = "MIDI files (*.mid *.midi)"
     RECENT_FILES_LIMIT = 20
     SESSION_PATH = UTILS_SAVE_DIR / "session.keytab2"
+    DEFAULT_TEMPLATE_PATH = UTILS_SAVE_DIR / "__default__.keytab2"
 
     def __init__(self, parent: QWidget | None = None) -> None:
         self.parent = parent
@@ -28,9 +29,35 @@ class FileManager:
         self._last_directory = Path.home()
 
     def new(self) -> KeyTab2Document:
-        self.document = KeyTab2Document.new()
+        if self.DEFAULT_TEMPLATE_PATH.is_file():
+            try:
+                self.document = KeyTab2Document.load(self.DEFAULT_TEMPLATE_PATH)
+            except (OSError, ValueError) as error:
+                self._show_error("Default template failed", f"Could not load the default template.\n\n{error}")
+                self.document = KeyTab2Document.new()
+        else:
+            self.document = KeyTab2Document.new()
         self.path = None
         return self.document
+
+    def set_default_template(self) -> bool:
+        """Save the current document as the template used by New."""
+        try:
+            self.DEFAULT_TEMPLATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            self.document.save(self.DEFAULT_TEMPLATE_PATH)
+        except (OSError, ValueError) as error:
+            self._show_error("Default template failed", f"Could not save the default template.\n\n{error}")
+            return False
+        return True
+
+    def reset_default_template(self) -> bool:
+        """Remove the template used by New, restoring blank documents."""
+        try:
+            self.DEFAULT_TEMPLATE_PATH.unlink(missing_ok=True)
+        except OSError as error:
+            self._show_error("Default template failed", f"Could not reset the default template.\n\n{error}")
+            return False
+        return True
 
     def new_test_score(self) -> KeyTab2Document:
         """Create an unsaved score containing representative note geometry."""

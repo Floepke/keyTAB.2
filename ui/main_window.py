@@ -240,6 +240,11 @@ class MainWindow(QMainWindow):
         self.save_as_action.setShortcut("Ctrl+Shift+S")
         self.save_as_action.triggered.connect(self.save_document_as)
         file_menu.addSeparator()
+        set_default_template_action = file_menu.addAction("Set Current as Default Template")
+        set_default_template_action.triggered.connect(self.set_default_template)
+        reset_default_template_action = file_menu.addAction("Reset Default Template")
+        reset_default_template_action.triggered.connect(self.reset_default_template)
+        file_menu.addSeparator()
         export_pdf_action = file_menu.addAction("Export &PDF...")
         export_pdf_action.setShortcut("Ctrl+E")
         export_pdf_action.triggered.connect(self.export_pdf)
@@ -319,6 +324,13 @@ class MainWindow(QMainWindow):
         self.right_note_input_action.triggered.connect(lambda: self.paper_canvas.select_note_hand("right"))
         toolbar.addAction(self.right_note_input_action)
 
+        self.arpeggio_action = QAction(get_qicon("arpeggio", (28, 28)), "", self)
+        self.arpeggio_action.setObjectName("arpeggioAction")
+        self.arpeggio_action.setToolTip("Create and edit arpeggios")
+        self.arpeggio_action.setCheckable(True)
+        self.arpeggio_action.triggered.connect(self.paper_canvas.select_arpeggio_mode)
+        toolbar.addAction(self.arpeggio_action)
+
         self.system_break_action = QAction(get_qicon("line_break", (28, 28)), "", self)
         self.system_break_action.setObjectName("systemBreakAction")
         self.system_break_action.setToolTip("Insert or remove a system break")
@@ -353,13 +365,6 @@ class MainWindow(QMainWindow):
         self.right_slur_action.setCheckable(True)
         self.right_slur_action.triggered.connect(lambda: self.paper_canvas.select_slur_mode("right"))
         toolbar.addAction(self.right_slur_action)
-
-        self.arpeggio_action = QAction(get_qicon("arpeggio", (28, 28)), "", self)
-        self.arpeggio_action.setObjectName("arpeggioAction")
-        self.arpeggio_action.setToolTip("Create and edit arpeggios")
-        self.arpeggio_action.setCheckable(True)
-        self.arpeggio_action.triggered.connect(self.paper_canvas.select_arpeggio_mode)
-        toolbar.addAction(self.arpeggio_action)
 
         note_hand_group = QActionGroup(toolbar)
         note_hand_group.setExclusive(True)
@@ -499,6 +504,14 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Document saved", 3000)
             self._update_title()
 
+    def set_default_template(self) -> None:
+        if self.file_manager.set_default_template():
+            self.statusBar().showMessage("Default template saved", 3000)
+
+    def reset_default_template(self) -> None:
+        if self.file_manager.reset_default_template():
+            self.statusBar().showMessage("Default template reset", 3000)
+
     def export_pdf(self) -> None:
         suggested_name = f"{self.document.score_info.title.strip() or 'Untitled'}.pdf"
         path, _ = QFileDialog.getSaveFileName(self, "Export PDF", suggested_name, "PDF files (*.pdf)")
@@ -516,6 +529,7 @@ class MainWindow(QMainWindow):
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
         dialog.apply_to_document()
+        self.paper_canvas.invalidate_render_cache()
         self._record_document_change()
         self._update_title()
         self.statusBar().showMessage("Score info updated", 3000)
